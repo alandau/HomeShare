@@ -1,5 +1,6 @@
 #include <winsock2.h>
 #include "SocketThread.h"
+#include "lib/win/MessageThread.h"
 #include "lib/win/window.h"
 #include <string>
 #include <vector>
@@ -26,65 +27,19 @@ struct SocketData {
     uint32_t sendFileBufferOffset = 0;
 };
 
-class MessageWindow : public Window
-{
+class SocketThread : public MessageThread {
 public:
     enum {
-        WM_SOCKET = WM_USER,
-        WM_RUN_IN_THREAD,
+        WM_SOCKET = WM_USER_MESSAGE,
     };
-    using NotifyCb = std::function<void(SOCKET, int, int)>;
 
-    MessageWindow(NotifyCb notifyCb)
-        : notifyCb_(std::move(notifyCb))
-    {}
-    LPCTSTR ClassName() override { return TEXT("MessageWindow"); }
-    static MessageWindow *Create(NotifyCb notifyCb) {
-        MessageWindow* self = new MessageWindow(notifyCb);
-        if (self->WinCreateWindow(0,
-            TEXT(""), WS_OVERLAPPEDWINDOW,
-            CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
-            HWND_MESSAGE, NULL)) {
-            return self;
-        }
-        delete self;
-        return nullptr;
-    }
-
-    void RunInThread(std::function<void(void)> func) {
-        std::function<void(void)>* p = new std::function<void(void)>(std::move(func));
-        PostMessage(GetHWND(), WM_RUN_IN_THREAD, (WPARAM)p, 0);
-    }
-protected:
-    LRESULT HandleMessage(UINT uMsg, WPARAM wParam, LPARAM lParam) {
-        if (uMsg == WM_RUN_IN_THREAD) {
-            std::function<void(void)>* func = (std::function<void(void)>*)wParam;
-            (*func)();
-            delete func;
-            return 0;
-        }
-        if (uMsg == WM_SOCKET) {
-            SOCKET sock = (SOCKET)wParam;
-            int error = WSAGETSELECTERROR(lParam);
-            int event = WSAGETSELECTEVENT(lParam);
-            notifyCb_(sock, event, error);
-            return 0;
-        }
-        return Window::HandleMessage(uMsg, wParam, lParam);
-    }
-private:
-    NotifyCb notifyCb_;
-};
-
-class SocketThread {
-public:
     SocketThread(HWND notifyHwnd);
-    void ExitAndWait();
-    void RunInThread(std::function<void(void)> func);
     void SendFile(const Contact& c, const std::wstring& filename);
 
+protected:
+    std::optional<LRESULT> HandleMessage(UINT uMsg, WPARAM wParam, LPARAM lParam) override;
+    void InitInThread() override;
 private:
-    void Loop();
     void onSocketEvent(SOCKET s, int event, int error);
     void CloseSocket(SOCKET s);
     void OnRead(SOCKET s);
@@ -92,9 +47,7 @@ private:
     void HandleIncomingMessage(SocketData& data, const uint8_t* message, uint32_t len);
 
     HWND notifyHwnd_;
-    std::thread thread_;
     SOCKET serverSocket_;
-    MessageWindow* win_;
     std::unordered_map<SOCKET, SocketData> socketData_;
 };
 
@@ -106,10 +59,6 @@ SocketThreadApi::~SocketThreadApi() {
     delete d;
 }
 
-void SocketThreadApi::ExitAndWait() {
-    d->ExitAndWait();
-}
-
 void SocketThreadApi::SendFile(const Contact& c, const std::wstring& filename) {
     d->RunInThread([this, c, filename] {
         d->SendFile(c, filename);
@@ -118,19 +67,31 @@ void SocketThreadApi::SendFile(const Contact& c, const std::wstring& filename) {
 
 SocketThread::SocketThread(HWND notifyHwnd)
     : notifyHwnd_(notifyHwnd)
-    , thread_(std::thread([this] { Loop(); }))
 {
 }
 
-void SocketThread::RunInThread(std::function<void(void)> func) {
-    win_->RunInThread(std::move(func));
+void SocketThread::InitInThread() {
+    WSADATA wsd;
+    WSAStartup(MAKEWORD(2, 2), &wsd);
+    serverSocket_ = socket(AF_INET, SOCK_STREAM, 0);
+    sockaddr_in addr = { 0 };
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    addr.sin_port = htons(8890);
+    bind(serverSocket_, (sockaddr*)&addr, sizeof(addr));
+    WSAAsyncSelect(serverSocket_, GetHWND(), WM_SOCKET, FD_ACCEPT | FD_CLOSE);
+    listen(serverSocket_, 10);
 }
 
-void SocketThread::ExitAndWait() {
-    RunInThread([] {
-        PostQuitMessage(0);
-    });
-    thread_.join();
+std::optional<LRESULT> SocketThread::HandleMessage(UINT uMsg, WPARAM wParam, LPARAM lParam) {
+    if (uMsg == WM_SOCKET) {
+        SOCKET sock = (SOCKET)wParam;
+        int error = WSAGETSELECTERROR(lParam);
+        int event = WSAGETSELECTEVENT(lParam);
+        onSocketEvent(sock, event, error);
+        return (LRESULT)0;
+    }
+    return std::nullopt;
 }
 
 void SocketThread::SendFile(const Contact& c, const std::wstring& filename) {
@@ -147,7 +108,7 @@ void SocketThread::SendFile(const Contact& c, const std::wstring& filename) {
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = inet_addr(c.hostname);
     addr.sin_port = htons(c.port);
-    WSAAsyncSelect(s, win_->GetHWND(), MessageWindow::WM_SOCKET, FD_CONNECT | FD_READ | FD_WRITE | FD_CLOSE);
+    WSAAsyncSelect(s, GetHWND(), WM_SOCKET, FD_CONNECT | FD_READ | FD_WRITE | FD_CLOSE);
 
     SocketData& data = socketData_[s];
     data.sendFileHandle = hFile;
@@ -162,31 +123,11 @@ void SocketThread::SendFile(const Contact& c, const std::wstring& filename) {
     }
 }
 
-void SocketThread::Loop() {
-    win_ = MessageWindow::Create([this](SOCKET s, int event, int error) { onSocketEvent(s, event, error); });
-
-    WSADATA wsd;
-    WSAStartup(MAKEWORD(2, 2), &wsd);
-    serverSocket_ = socket(AF_INET, SOCK_STREAM, 0);
-    sockaddr_in addr = { 0 };
-    addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = htonl(INADDR_ANY);
-    addr.sin_port = htons(8890);
-    bind(serverSocket_, (sockaddr*)&addr, sizeof(addr));
-    WSAAsyncSelect(serverSocket_, win_->GetHWND(), MessageWindow::WM_SOCKET, FD_ACCEPT | FD_CLOSE);
-    listen(serverSocket_, 10);
-
-    MSG msg;
-    while (GetMessage(&msg, NULL, 0, 0)) {
-        TranslateMessage(&msg);
-        DispatchMessage(&msg);
-    }
-}
-
 void SocketThread::CloseSocket(SOCKET s) {
     closesocket(s);
     socketData_.erase(s);
 }
+
 void SocketThread::OnRead(SOCKET s) {
     if (socketData_.find(s) == socketData_.end()) {
         // Socket has been closed, but getting notification for previously received data, ignore
@@ -323,7 +264,7 @@ void SocketThread::onSocketEvent(SOCKET sock, int event, int error) {
         SocketData& data = socketData_[clientSock];
         data.sock = clientSock;
         data.addr = addr;
-        WSAAsyncSelect(clientSock, win_->GetHWND(), MessageWindow::WM_SOCKET, FD_READ | FD_WRITE | FD_CLOSE);
+        WSAAsyncSelect(clientSock, GetHWND(), WM_SOCKET, FD_READ | FD_WRITE | FD_CLOSE);
         break;
     }
     case FD_READ:

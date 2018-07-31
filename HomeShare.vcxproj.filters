@@ -33,6 +33,9 @@
     <ClInclude Include="SocketThread.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="lib\win\MessageThread.h">
+      <Filter>lib\win</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="HomeShare.cpp">
@@ -43,6 +46,9 @@
     </ClCompile>
     <ClCompile Include="SocketThread.cpp">
       <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="lib\win\MessageThread.cpp">
+      <Filter>lib\win</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

@@ -76,6 +76,7 @@
       <Optimization>Disabled</Optimization>
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>STRICT;UNICODE;_UNICODE;WIN32_LEAN_AND_MEAN</PreprocessorDefinitions>
+      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <AdditionalDependencies>kernel32.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;comctl32.lib;ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>
@@ -87,6 +88,7 @@
       <Optimization>Disabled</Optimization>
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>STRICT;UNICODE;_UNICODE;WIN32_LEAN_AND_MEAN</PreprocessorDefinitions>
+      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <AdditionalDependencies>kernel32.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;comctl32.lib;ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>
@@ -101,6 +103,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>STRICT;UNICODE;_UNICODE;WIN32_LEAN_AND_MEAN</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
@@ -117,6 +120,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>STRICT;UNICODE;_UNICODE;WIN32_LEAN_AND_MEAN</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
@@ -126,10 +130,12 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="HomeShare.cpp" />
+    <ClCompile Include="lib\win\MessageThread.cpp" />
     <ClCompile Include="lib\win\window.cpp" />
     <ClCompile Include="SocketThread.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="lib\win\MessageThread.h" />
     <ClInclude Include="lib\win\raii.h" />
     <ClInclude Include="lib\win\window.h" />
     <ClInclude Include="resource.h" />

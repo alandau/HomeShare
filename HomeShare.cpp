@@ -13,7 +13,6 @@ public:
     LPCTSTR ClassName() override { return TEXT("HomeShare"); }
     void PaintContent(PAINTSTRUCT* pps) override;
     static RootWindow *Create();
-    ~RootWindow();
 protected:
     LRESULT HandleMessage(UINT uMsg, WPARAM wParam, LPARAM lParam);
     LRESULT OnCreate();
@@ -26,10 +25,6 @@ LRESULT RootWindow::OnCreate()
 {
     socketThread_.Init(GetHWND());
     return 0;
-}
-
-RootWindow::~RootWindow() {
-    socketThread_.ExitAndWait();
 }
 
 wchar_t *buf;
