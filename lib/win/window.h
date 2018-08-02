@@ -1,13 +1,19 @@
 #pragma once
 
 #include <windows.h>
+#include <functional>
 
 extern HINSTANCE g_hinst;
 
 class Window
 {
 public:
+    enum {
+        WM_RUN_IN_THREAD = WM_USER,
+    };
+
     HWND GetHWND() { return m_hwnd; }
+    void RunInThread(std::function<void(void)> func);
 protected:
     virtual LRESULT HandleMessage(UINT uMsg, WPARAM wParam, LPARAM lParam);
     virtual void PaintContent(PAINTSTRUCT *pps) {}

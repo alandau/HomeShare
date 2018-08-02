@@ -1,13 +1,11 @@
 #pragma once
 
 #include <windows.h>
-#include <functional>
 #include <thread>
 #include <optional>
 
 class MessageThread {
 public:
-    enum {WM_USER_MESSAGE = WM_USER + 10};
     MessageThread();
     virtual ~MessageThread();
     void RunInThread(std::function<void(void)> func);

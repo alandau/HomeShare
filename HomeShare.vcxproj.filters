@@ -19,6 +19,9 @@
     <Filter Include="lib\win">
       <UniqueIdentifier>{65fddd78-f79d-4fe6-a354-cd1d1ba3e8ac}</UniqueIdentifier>
     </Filter>
+    <Filter Include="lib\fmt">
+      <UniqueIdentifier>{24688efb-d480-457c-aafc-dc0959219381}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="lib\win\window.h">
@@ -35,6 +38,33 @@
     </ClInclude>
     <ClInclude Include="lib\win\MessageThread.h">
       <Filter>lib\win</Filter>
+    </ClInclude>
+    <ClInclude Include="Logger.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="lib\fmt\core.h">
+      <Filter>lib\fmt</Filter>
+    </ClInclude>
+    <ClInclude Include="lib\fmt\format.h">
+      <Filter>lib\fmt</Filter>
+    </ClInclude>
+    <ClInclude Include="lib\fmt\format-inl.h">
+      <Filter>lib\fmt</Filter>
+    </ClInclude>
+    <ClInclude Include="lib\fmt\ostream.h">
+      <Filter>lib\fmt</Filter>
+    </ClInclude>
+    <ClInclude Include="lib\fmt\posix.h">
+      <Filter>lib\fmt</Filter>
+    </ClInclude>
+    <ClInclude Include="lib\fmt\printf.h">
+      <Filter>lib\fmt</Filter>
+    </ClInclude>
+    <ClInclude Include="lib\fmt\ranges.h">
+      <Filter>lib\fmt</Filter>
+    </ClInclude>
+    <ClInclude Include="lib\fmt\time.h">
+      <Filter>lib\fmt</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

@@ -32,9 +32,22 @@ LRESULT CALLBACK Window::s_WndProc(
         self = reinterpret_cast<Window *>(GetWindowLongPtr(hwnd, GWLP_USERDATA));
     }
     if (self) {
+        if (uMsg == WM_RUN_IN_THREAD) {
+            std::function<void(void)>* func = (std::function<void(void)>*)wParam;
+            (*func)();
+            delete func;
+            return 0;
+        }
         return self->HandleMessage(uMsg, wParam, lParam);
     }
     return DefWindowProc(hwnd, uMsg, wParam, lParam);
+}
+
+void Window::RunInThread(std::function<void(void)> func) {
+    std::function<void(void)>* p = new std::function<void(void)>(std::move(func));
+    if (!PostMessage(GetHWND(), WM_RUN_IN_THREAD, (WPARAM)p, 0)) {
+        delete p;
+    }
 }
 
 LRESULT Window::HandleMessage(UINT uMsg, WPARAM wParam, LPARAM lParam)

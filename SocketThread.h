@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include "Logger.h"
 
 class SocketThread;
 
@@ -11,7 +12,7 @@ struct Contact {
 
 class SocketThreadApi {
 public:
-    void Init(HWND notifyHwnd);
+    void Init(Logger* logger, HWND notifyHwnd);
     ~SocketThreadApi();
     void SendFile(const Contact& c, const std::wstring& filename);
 private:

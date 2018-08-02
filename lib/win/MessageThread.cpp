@@ -4,10 +4,6 @@
 class MessageThread::MessageWindow : public Window
 {
 public:
-    enum {
-        WM_RUN_IN_THREAD = WM_USER,
-    };
-
     LPCTSTR ClassName() override { return TEXT("MessageWindow"); }
     static MessageWindow *Create(MessageThread* thread) {
         MessageWindow* self = new MessageWindow();
@@ -22,18 +18,8 @@ public:
         return nullptr;
     }
 
-    void RunInThread(std::function<void(void)> func) {
-        std::function<void(void)>* p = new std::function<void(void)>(std::move(func));
-        PostMessage(GetHWND(), WM_RUN_IN_THREAD, (WPARAM)p, 0);
-    }
 protected:
     LRESULT HandleMessage(UINT uMsg, WPARAM wParam, LPARAM lParam) {
-        if (uMsg == WM_RUN_IN_THREAD) {
-            std::function<void(void)>* func = (std::function<void(void)>*)wParam;
-            (*func)();
-            delete func;
-            return 0;
-        }
         std::optional<LRESULT> res = thread_->HandleMessage(uMsg, wParam, lParam);
         if (res) {
             return *res;

@@ -30,10 +30,10 @@ struct SocketData {
 class SocketThread : public MessageThread {
 public:
     enum {
-        WM_SOCKET = WM_USER_MESSAGE,
+        WM_SOCKET = WM_APP,
     };
 
-    SocketThread(HWND notifyHwnd);
+    SocketThread(Logger& logger, HWND notifyHwnd);
     void SendFile(const Contact& c, const std::wstring& filename);
 
 protected:
@@ -46,13 +46,14 @@ private:
     void OnWrite(SOCKET s);
     void HandleIncomingMessage(SocketData& data, const uint8_t* message, uint32_t len);
 
+    Logger& log;
     HWND notifyHwnd_;
     SOCKET serverSocket_;
     std::unordered_map<SOCKET, SocketData> socketData_;
 };
 
-void SocketThreadApi::Init(HWND notifyHwnd) {
-    d = new SocketThread(notifyHwnd);
+void SocketThreadApi::Init(Logger* logger, HWND notifyHwnd) {
+    d = new SocketThread(*logger, notifyHwnd);
 }
 
 SocketThreadApi::~SocketThreadApi() {
@@ -65,8 +66,9 @@ void SocketThreadApi::SendFile(const Contact& c, const std::wstring& filename) {
     });
 }
 
-SocketThread::SocketThread(HWND notifyHwnd)
-    : notifyHwnd_(notifyHwnd)
+SocketThread::SocketThread(Logger& logger, HWND notifyHwnd)
+    : log(logger)
+    , notifyHwnd_(notifyHwnd)
 {
 }
 
@@ -196,7 +198,7 @@ void SocketThread::HandleIncomingMessage(SocketData& data, const uint8_t* messag
     wchar_t* wbuf = new wchar_t[len];
     int wsize = MultiByteToWideChar(CP_UTF8, 0, (const char*)message, len, wbuf, len);
 
-    PostMessage(notifyHwnd_, WM_USER, (WPARAM)wbuf, wsize);
+    PostMessage(notifyHwnd_, WM_USER+1, (WPARAM)wbuf, wsize);
 }
 
 void SocketThread::OnWrite(SOCKET s) {
@@ -226,7 +228,7 @@ void SocketThread::OnWrite(SOCKET s) {
                 CloseHandle(data.sendFileHandle);
                 data.sendFileHandle = nullptr;
                 CloseSocket(s);
-                MessageBox(NULL, L"Done!", NULL, MB_OK);
+                log.i(L"Done!");
                 return;
             }
             memcpy(data.sendFileBuffer, &count, sizeof(uint32_t));
