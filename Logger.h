@@ -4,7 +4,7 @@
 
 class Logger {
 public:
-    enum LogLevel {F, E, W, I, D};
+    enum LogLevel {E, W, I, D};
     
     virtual ~Logger() {}
     
@@ -14,9 +14,6 @@ public:
             logString(level, fmt::format(args...));
         }
     }
-
-    template <class... Args>
-    void f(const Args&... args) { log(F, args...); }
 
     template <class... Args>
     void e(const Args&... args) { log(E, args...); }

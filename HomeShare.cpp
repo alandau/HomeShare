@@ -30,7 +30,6 @@ protected:
             tm.tm_hour, tm.tm_min, tm.tm_sec);
         auto levelToStr = [](LogLevel level) {
             switch (level) {
-            case F: return L"Fatal";
             case E: return L"Error";
             case W: return L"Warning";
             case I: return L"Info";
@@ -41,9 +40,10 @@ protected:
         std::wstring levelStr = levelToStr(level);
 
         LVITEM item;
-        item.mask = LVIF_TEXT;
+        item.mask = LVIF_TEXT | LVIF_IMAGE;
         item.iItem = INT_MAX;
         item.iSubItem = 0;
+        item.iImage = level == D ? -1 : (int)level;
         item.pszText = const_cast<LPWSTR>(levelStr.c_str());
         item.iItem = ListView_InsertItem(listView_, &item);
         if (item.iItem >= 0) {
@@ -93,12 +93,12 @@ LRESULT RootWindow::OnCreate()
     LVCOLUMN lvc;
 
     lvc.mask = LVCF_TEXT | LVCF_WIDTH;
-    lvc.cx = 50;
+    lvc.cx = 100;
     lvc.pszText = TEXT("Level");
     ListView_InsertColumn(logView_, 0, &lvc);
 
     lvc.mask = LVCF_TEXT | LVCF_WIDTH;
-    lvc.cx = 200;
+    lvc.cx = 150;
     lvc.pszText = TEXT("Time");
     ListView_InsertColumn(logView_, 1, &lvc);
 
@@ -106,6 +106,14 @@ LRESULT RootWindow::OnCreate()
     lvc.cx = 800;
     lvc.pszText = TEXT("Message");
     ListView_InsertColumn(logView_, 2, &lvc);
+
+    HIMAGELIST icons = ImageList_Create(GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON),
+        ILC_MASK | ILC_COLOR32, 3, 0);
+    ImageList_SetBkColor(icons, RGB(255, 255, 255));
+    ImageList_AddIcon(icons, LoadIcon(NULL, IDI_ERROR));
+    ImageList_AddIcon(icons, LoadIcon(NULL, IDI_WARNING));
+    ImageList_AddIcon(icons, LoadIcon(NULL, IDI_INFORMATION));
+    ListView_SetImageList(logView_, icons, LVSIL_SMALL);
 
     logger_.reset(new ListViewLogger(this, logView_));
     socketThread_.Init(logger_.get(), GetHWND());
