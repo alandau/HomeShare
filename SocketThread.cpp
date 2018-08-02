@@ -101,7 +101,7 @@ void SocketThread::SendFile(const Contact& c, const std::wstring& filename) {
         NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, NULL);
 
     if (hFile == INVALID_HANDLE_VALUE) {
-        MessageBox(NULL, (L"Can't open file " + filename).c_str(), NULL, MB_OK);
+        log.e(L"Can't open file {}", filename);
         return;
     }
 
@@ -121,7 +121,7 @@ void SocketThread::SendFile(const Contact& c, const std::wstring& filename) {
         CloseHandle(data.sendFileHandle);
         data.sendFileHandle = nullptr;
         CloseSocket(s);
-        MessageBox(NULL, (L"Can't connect " + std::to_wstring(res)).c_str(), NULL, MB_OK);
+        log.e(L"Can't connect, WSAGetLastError={}", res);
     }
 }
 
@@ -142,17 +142,18 @@ void SocketThread::OnRead(SOCKET s) {
         while (data.messageLenLen < 4) {
             int count = recv(s, (char*)&data.messageLen, 4 - data.messageLenLen, 0);
             if (count < 0) {
-                if (WSAGetLastError() == WSAEWOULDBLOCK) {
+                int err;
+                if ((err = WSAGetLastError()) == WSAEWOULDBLOCK) {
                     return;
                 }
+                log.e(L"Error reading from socket, WSAGetLastError={}", err);
                 CloseSocket(s);
-                MessageBox(NULL, L"Error reading from socket", NULL, MB_OK);
                 return;
             } else if (count == 0) {
                 // EOF
                 if (data.messageLenLen != 0) {
                     // Unexpected EOF
-                    MessageBox(NULL, L"End of file reading size from socket", NULL, MB_OK);
+                    log.e(L"End of file reading size from socket");
                 }
                 CloseSocket(s);
                 return;
@@ -163,8 +164,8 @@ void SocketThread::OnRead(SOCKET s) {
         if (data.messageLenLen == 4) {
             // We just finished reading the length
             if (data.messageLen < 4 || data.messageLen >= MAX_MESSAGE_SIZE) {
+                log.e(L"Too large message received (dec={0}, hex={0:08x})", data.messageLen);
                 CloseSocket(s);
-                MessageBox(NULL, L"Too large message", NULL, MB_OK);
                 return;
             }
             data.message = new uint8_t[data.messageLen];
@@ -176,15 +177,16 @@ void SocketThread::OnRead(SOCKET s) {
     while (data.countSoFar < data.messageLen) {
         int count = recv(s, (char*)data.message, data.messageLen - data.countSoFar, 0);
         if (count < 0) {
-            if (WSAGetLastError() == WSAEWOULDBLOCK) {
+            int err;
+            if ((err = WSAGetLastError()) == WSAEWOULDBLOCK) {
                 return;
             }
+            log.e(L"Error reading from socket, WSAGetLastError={}", err);
             CloseSocket(s);
-            MessageBox(NULL, L"Error reading from socket", NULL, MB_OK);
         } else if (count == 0) {
             // Unexpected EOF
+            log.e(L"End of file reading message from socket");
             CloseSocket(s);
-            MessageBox(NULL, L"End of file reading message from socket", NULL, MB_OK);
         }
         data.countSoFar += count;
     }
@@ -217,18 +219,18 @@ void SocketThread::OnWrite(SOCKET s) {
             bool success = ReadFile(data.sendFileHandle, data.sendFileBuffer + sizeof(uint32_t),
                 sizeof(data.sendFileBuffer) - sizeof(uint32_t), &count, NULL);
             if (!success) {
+                log.e(L"Error reading from file");
                 CloseHandle(data.sendFileHandle);
                 data.sendFileHandle = nullptr;
                 CloseSocket(s);
-                MessageBox(NULL, L"Error reading from file", NULL, MB_OK);
                 return;
             }
             if (count == 0) {
                 // EOF
+                log.i(L"Done!");
                 CloseHandle(data.sendFileHandle);
                 data.sendFileHandle = nullptr;
                 CloseSocket(s);
-                log.i(L"Done!");
                 return;
             }
             memcpy(data.sendFileBuffer, &count, sizeof(uint32_t));
@@ -238,13 +240,13 @@ void SocketThread::OnWrite(SOCKET s) {
         int res = send(s, (const char*)data.sendFileBuffer + data.sendFileBufferOffset,
             data.sendFileBufferSize - data.sendFileBufferOffset, 0);
         if (res < 0) {
-            if (WSAGetLastError() == WSAEWOULDBLOCK) {
+            if ((res = WSAGetLastError()) == WSAEWOULDBLOCK) {
                 return;
             }
+            log.e(L"Error writing to socket, WSAGetLastError={}", res);
             CloseHandle(data.sendFileHandle);
             data.sendFileHandle = nullptr;
             CloseSocket(s);
-            MessageBox(NULL, L"Error writing to socket", NULL, MB_OK);
             return;
         }
         data.sendFileOffset += res;
@@ -254,7 +256,7 @@ void SocketThread::OnWrite(SOCKET s) {
 
 void SocketThread::onSocketEvent(SOCKET sock, int event, int error) {
     if (error) {
-        MessageBox(NULL, L"Socket error", NULL, MB_OK);
+        log.e(L"Socket error {}", error);
         CloseSocket(sock);
         return;
     }

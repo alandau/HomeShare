@@ -93,7 +93,7 @@ LRESULT RootWindow::OnCreate()
     LVCOLUMN lvc;
 
     lvc.mask = LVCF_TEXT | LVCF_WIDTH;
-    lvc.cx = 200;
+    lvc.cx = 50;
     lvc.pszText = TEXT("Level");
     ListView_InsertColumn(logView_, 0, &lvc);
 
