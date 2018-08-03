@@ -66,6 +66,12 @@
     <ClInclude Include="lib\fmt\time.h">
       <Filter>lib\fmt</Filter>
     </ClInclude>
+    <ClInclude Include="lib\Buffer.h">
+      <Filter>lib</Filter>
+    </ClInclude>
+    <ClInclude Include="DiskThread.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="HomeShare.cpp">
@@ -79,6 +85,9 @@
     </ClCompile>
     <ClCompile Include="lib\win\MessageThread.cpp">
       <Filter>lib\win</Filter>
+    </ClCompile>
+    <ClCompile Include="DiskThread.cpp">
+      <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

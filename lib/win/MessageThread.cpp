@@ -47,6 +47,10 @@ void MessageThread::RunInThread(std::function<void(void)> func) {
     win_->RunInThread(std::move(func));
 }
 
+LRESULT MessageThread::RunInThreadWithResult(std::function<LRESULT(void)> func) {
+    return win_->RunInThreadWithResult(std::move(func));
+}
+
 HWND MessageThread::GetHWND() const {
     return win_->GetHWND();
 }

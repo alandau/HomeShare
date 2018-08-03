@@ -9,6 +9,7 @@ public:
     MessageThread();
     virtual ~MessageThread();
     void RunInThread(std::function<void(void)> func);
+    LRESULT RunInThreadWithResult(std::function<LRESULT(void)> func);
     HWND GetHWND() const;
 
 protected:

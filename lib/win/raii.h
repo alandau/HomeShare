@@ -14,3 +14,24 @@ struct ComInit {
         CoUninitialize();
     }
 };
+
+struct ScopeGuardDummy {};
+
+template <class F>
+struct ScopeGuard {
+    ScopeGuard(F f)
+        : f(std::forward<F>(f))
+    {}
+    ~ScopeGuard() {
+        f();
+    }
+private:
+    F f;
+};
+
+template <class F>
+ScopeGuard<F> operator +(ScopeGuardDummy, F f) {
+    return ScopeGuard<F>(std::forward<F>(f));
+}
+
+#define SCOPE_EXIT auto tmp_ ## LINE = ScopeGuardDummy() + [&]()

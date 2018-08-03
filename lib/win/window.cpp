@@ -37,6 +37,10 @@ LRESULT CALLBACK Window::s_WndProc(
             (*func)();
             delete func;
             return 0;
+        } else if (uMsg == WM_RUN_IN_THREAD_WITH_RESULT) {
+            std::function<LRESULT(void)>* func = (std::function<LRESULT(void)>*)wParam;
+            LRESULT res = (*func)();
+            return res;
         }
         return self->HandleMessage(uMsg, wParam, lParam);
     }
@@ -48,6 +52,11 @@ void Window::RunInThread(std::function<void(void)> func) {
     if (!PostMessage(GetHWND(), WM_RUN_IN_THREAD, (WPARAM)p, 0)) {
         delete p;
     }
+}
+
+LRESULT Window::RunInThreadWithResult(std::function<LRESULT(void)> func) {
+//    std::function<LRESULT(void)>* p = new std::function<LRESULT(void)>(std::move(func));
+    return SendMessage(GetHWND(), WM_RUN_IN_THREAD_WITH_RESULT, (WPARAM)&func, 0);
 }
 
 LRESULT Window::HandleMessage(UINT uMsg, WPARAM wParam, LPARAM lParam)

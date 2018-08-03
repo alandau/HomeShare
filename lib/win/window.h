@@ -10,10 +10,12 @@ class Window
 public:
     enum {
         WM_RUN_IN_THREAD = WM_USER,
+        WM_RUN_IN_THREAD_WITH_RESULT,
     };
 
     HWND GetHWND() { return m_hwnd; }
     void RunInThread(std::function<void(void)> func);
+    LRESULT RunInThreadWithResult(std::function<LRESULT(void)> func);
 protected:
     virtual LRESULT HandleMessage(UINT uMsg, WPARAM wParam, LPARAM lParam);
     virtual void PaintContent(PAINTSTRUCT *pps) {}

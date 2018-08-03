@@ -1,6 +1,7 @@
 #include "lib/win/window.h"
 #include "lib/win/raii.h"
 #include "SocketThread.h"
+#include "DiskThread.h"
 #include "Logger.h"
 #include "resource.h"
 #include <windows.h>
@@ -72,7 +73,8 @@ protected:
 private:
     HWND logView_;
     std::unique_ptr<ListViewLogger> logger_;
-    SocketThreadApi socketThread_;
+    std::unique_ptr<SocketThreadApi> socketThread_;
+    std::unique_ptr<DiskThread> diskThread_;
 };
 
 LRESULT RootWindow::OnCreate()
@@ -116,7 +118,9 @@ LRESULT RootWindow::OnCreate()
     ListView_SetImageList(logView_, icons, LVSIL_SMALL);
 
     logger_.reset(new ListViewLogger(this, logView_));
-    socketThread_.Init(logger_.get(), GetHWND());
+    socketThread_.reset(new SocketThreadApi);
+    socketThread_->Init(logger_.get(), GetHWND());
+    diskThread_.reset(new DiskThread(logger_.get(), socketThread_.get()));
     return 0;
 }
 
@@ -146,7 +150,8 @@ LRESULT RootWindow::HandleMessage(UINT uMsg, WPARAM wParam, LPARAM lParam)
             SetFocus(logView_);
         }
         return 0;
-    case WM_USER+1:
+
+    case WM_USER+100:
         if (buf) {
             delete[] buf;
         }
@@ -172,7 +177,7 @@ LRESULT RootWindow::HandleMessage(UINT uMsg, WPARAM wParam, LPARAM lParam)
                 Contact c;
                 c.hostname = "127.0.0.1";
                 c.port = 8890;
-                socketThread_.SendFile(c, filename);
+                diskThread_->Enqueue(c, filename);
             }
             break;
         }

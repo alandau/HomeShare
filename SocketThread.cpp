@@ -2,15 +2,16 @@
 #include "SocketThread.h"
 #include "lib/win/MessageThread.h"
 #include "lib/win/window.h"
+#include "lib/win/raii.h"
 #include <string>
 #include <vector>
 #include <thread>
 #include <unordered_map>
-#include <assert.h>
+#include <deque>
 
 enum { MAX_MESSAGE_SIZE = 100000 };
 struct SocketData {
-    SOCKET sock;
+    Contact contact;
     sockaddr addr;
 
     // Fields for reading a message
@@ -19,12 +20,9 @@ struct SocketData {
     uint8_t* message = nullptr;
     uint32_t countSoFar = 0;
 
-    // Fields for writing a file
-    HANDLE sendFileHandle = nullptr;
-    uint64_t sendFileOffset = 0;
-    uint8_t sendFileBuffer[65536];
-    uint32_t sendFileBufferSize = 0;
-    uint32_t sendFileBufferOffset = 0;
+    bool isCorked = false;
+    bool isQueueFull = false;
+    std::deque<Buffer*> queue;
 };
 
 class SocketThread : public MessageThread {
@@ -33,8 +31,11 @@ public:
         WM_SOCKET = WM_APP,
     };
 
+    enum { LOW_WATERMARK = 10, HIGH_WATERMARK = 100 };
+    enum { MAX_BUFFERS_TO_SEND = 10 };
+
     SocketThread(Logger& logger, HWND notifyHwnd);
-    void SendFile(const Contact& c, const std::wstring& filename);
+    bool SendBuffer(const Contact& c, Buffer* buffer);
 
 protected:
     std::optional<LRESULT> HandleMessage(UINT uMsg, WPARAM wParam, LPARAM lParam) override;
@@ -50,6 +51,7 @@ private:
     HWND notifyHwnd_;
     SOCKET serverSocket_;
     std::unordered_map<SOCKET, SocketData> socketData_;
+    std::unordered_map<Contact, SOCKET> contactData_;
 };
 
 void SocketThreadApi::Init(Logger* logger, HWND notifyHwnd) {
@@ -60,9 +62,9 @@ SocketThreadApi::~SocketThreadApi() {
     delete d;
 }
 
-void SocketThreadApi::SendFile(const Contact& c, const std::wstring& filename) {
-    d->RunInThread([this, c, filename] {
-        d->SendFile(c, filename);
+bool SocketThreadApi::SendBuffer(const Contact& c, Buffer* buffer) {
+    return d->RunInThreadWithResult([this, c, buffer] {
+        return d->SendBuffer(c, buffer);
     });
 }
 
@@ -96,13 +98,18 @@ std::optional<LRESULT> SocketThread::HandleMessage(UINT uMsg, WPARAM wParam, LPA
     return std::nullopt;
 }
 
-void SocketThread::SendFile(const Contact& c, const std::wstring& filename) {
-    HANDLE hFile = CreateFile(filename.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
-        NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, NULL);
-
-    if (hFile == INVALID_HANDLE_VALUE) {
-        log.e(L"Can't open file {}", filename);
-        return;
+bool SocketThread::SendBuffer(const Contact& c, Buffer* buffer) {
+    if (contactData_.find(c) != contactData_.end()) {
+        SOCKET s = contactData_[c];
+        SocketData& data = socketData_[s];
+        data.queue.push_back(buffer);
+        if (!data.isCorked) {
+            OnWrite(s);
+        }
+        if (data.queue.size() > HIGH_WATERMARK) {
+            data.isQueueFull = true;
+        }
+        return data.isQueueFull;
     }
 
     SOCKET s = socket(AF_INET, SOCK_STREAM, 0);
@@ -112,21 +119,24 @@ void SocketThread::SendFile(const Contact& c, const std::wstring& filename) {
     addr.sin_port = htons(c.port);
     WSAAsyncSelect(s, GetHWND(), WM_SOCKET, FD_CONNECT | FD_READ | FD_WRITE | FD_CLOSE);
 
+    contactData_[c] = s;
     SocketData& data = socketData_[s];
-    data.sendFileHandle = hFile;
-    data.sendFileOffset = 0;
+    data.contact = c;
+    data.queue.push_back(buffer);
+    data.isCorked = true;
 
     int res = connect(s, (sockaddr*)&addr, sizeof(addr));
     if (res < 0 && (res = WSAGetLastError()) != WSAEWOULDBLOCK) {
-        CloseHandle(data.sendFileHandle);
-        data.sendFileHandle = nullptr;
         CloseSocket(s);
         log.e(L"Can't connect, WSAGetLastError={}", res);
     }
+
+    return false;
 }
 
 void SocketThread::CloseSocket(SOCKET s) {
     closesocket(s);
+    contactData_.erase(socketData_[s].contact);
     socketData_.erase(s);
 }
 
@@ -199,8 +209,9 @@ void SocketThread::OnRead(SOCKET s) {
 void SocketThread::HandleIncomingMessage(SocketData& data, const uint8_t* message, uint32_t len) {
     wchar_t* wbuf = new wchar_t[len];
     int wsize = MultiByteToWideChar(CP_UTF8, 0, (const char*)message, len, wbuf, len);
+    delete[] message;
 
-    PostMessage(notifyHwnd_, WM_USER+1, (WPARAM)wbuf, wsize);
+    PostMessage(notifyHwnd_, WM_USER+100, (WPARAM)wbuf, wsize);
 }
 
 void SocketThread::OnWrite(SOCKET s) {
@@ -209,48 +220,38 @@ void SocketThread::OnWrite(SOCKET s) {
         return;
     }
     SocketData& data = socketData_[s];
-    if (data.sendFileHandle == nullptr) {
-        return;
-    }
+    data.isCorked = false;
 
-    while (1) {
-        if (data.sendFileBufferOffset == data.sendFileBufferSize) {
-            DWORD count;
-            bool success = ReadFile(data.sendFileHandle, data.sendFileBuffer + sizeof(uint32_t),
-                sizeof(data.sendFileBuffer) - sizeof(uint32_t), &count, NULL);
-            if (!success) {
-                log.e(L"Error reading from file");
-                CloseHandle(data.sendFileHandle);
-                data.sendFileHandle = nullptr;
-                CloseSocket(s);
-                return;
-            }
-            if (count == 0) {
-                // EOF
-                log.i(L"Done!");
-                CloseHandle(data.sendFileHandle);
-                data.sendFileHandle = nullptr;
-                CloseSocket(s);
-                return;
-            }
-            memcpy(data.sendFileBuffer, &count, sizeof(uint32_t));
-            data.sendFileBufferSize = count + sizeof(uint32_t);
-            data.sendFileBufferOffset = 0;
+    SCOPE_EXIT {
+        if (data.queue.size() < LOW_WATERMARK) {
+            data.isQueueFull = false;
+}
+    };
+
+    int count = 0;
+    while (!data.queue.empty() && count < MAX_BUFFERS_TO_SEND) {
+        Buffer* buffer = data.queue.front();
+        if (buffer->readSize() == 0) {
+            buffer->destroy();
+            data.queue.pop_front();
+            continue;
         }
-        int res = send(s, (const char*)data.sendFileBuffer + data.sendFileBufferOffset,
-            data.sendFileBufferSize - data.sendFileBufferOffset, 0);
+        int res = send(s, (const char*)buffer->readData(), buffer->readSize(), 0);
         if (res < 0) {
             if ((res = WSAGetLastError()) == WSAEWOULDBLOCK) {
+                data.isCorked = true;
                 return;
             }
             log.e(L"Error writing to socket, WSAGetLastError={}", res);
-            CloseHandle(data.sendFileHandle);
-            data.sendFileHandle = nullptr;
             CloseSocket(s);
             return;
         }
-        data.sendFileOffset += res;
-        data.sendFileBufferOffset += res;
+        buffer->adjustReadPos(res);
+        if (buffer->readSize() == 0) {
+            buffer->destroy();
+            data.queue.pop_front();
+            count++;
+        }
     }
 }
 
@@ -266,7 +267,6 @@ void SocketThread::onSocketEvent(SOCKET sock, int event, int error) {
         int addrlen = sizeof(addr);
         SOCKET clientSock = accept(sock, &addr, &addrlen);
         SocketData& data = socketData_[clientSock];
-        data.sock = clientSock;
         data.addr = addr;
         WSAAsyncSelect(clientSock, GetHWND(), WM_SOCKET, FD_READ | FD_WRITE | FD_CLOSE);
         break;
