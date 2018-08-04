@@ -3,7 +3,19 @@
 DiskThread::DiskThread(Logger* logger, SocketThreadApi* socketThread)
     : log(*logger)
     , socketThread_(socketThread)
-{}
+{
+    socketThread_->setQueueEmptyCb([this](const Contact& c) {
+        RunInThread([this, c] {
+            auto iter = corked_.find(c);
+            if (iter == corked_.end()) {
+                return;
+            }
+            uncorked_[c] = std::move(iter->second);
+            corked_.erase(iter);
+            DoWriteLoop();
+        });
+    });
+}
 
 void DiskThread::Enqueue(const Contact& c, const std::wstring& filename) {
     RunInThread([this, c, filename] {

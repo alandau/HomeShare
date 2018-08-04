@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <functional>
 #include "lib/Buffer.h"
 #include "Logger.h"
 
@@ -33,6 +34,7 @@ class SocketThreadApi {
 public:
     void Init(Logger* logger, HWND notifyHwnd);
     ~SocketThreadApi();
+    void setQueueEmptyCb(std::function<void(const Contact& c)> queueEmptyCb);
     // Return true if should cork (this buffer is still enqueued)
     bool SendBuffer(const Contact& c, Buffer* buffer);
 private:

@@ -22,6 +22,7 @@ struct SocketData {
 
     bool isCorked = false;
     bool isQueueFull = false;
+    bool onWriteScheduled = false;
     std::deque<Buffer*> queue;
 };
 
@@ -35,6 +36,7 @@ public:
     enum { MAX_BUFFERS_TO_SEND = 10 };
 
     SocketThread(Logger& logger, HWND notifyHwnd);
+    void setQueueEmptyCb(std::function<void(const Contact& c)> queueEmptyCb);
     bool SendBuffer(const Contact& c, Buffer* buffer);
 
 protected:
@@ -50,6 +52,7 @@ private:
     Logger& log;
     HWND notifyHwnd_;
     SOCKET serverSocket_;
+    std::function<void(const Contact& c)> queueEmptyCb_;
     std::unordered_map<SOCKET, SocketData> socketData_;
     std::unordered_map<Contact, SOCKET> contactData_;
 };
@@ -62,6 +65,10 @@ SocketThreadApi::~SocketThreadApi() {
     delete d;
 }
 
+void SocketThreadApi::setQueueEmptyCb(std::function<void(const Contact& c)> queueEmptyCb) {
+    d->setQueueEmptyCb(std::move(queueEmptyCb));
+}
+
 bool SocketThreadApi::SendBuffer(const Contact& c, Buffer* buffer) {
     return d->RunInThreadWithResult([this, c, buffer] {
         return d->SendBuffer(c, buffer);
@@ -72,6 +79,10 @@ SocketThread::SocketThread(Logger& logger, HWND notifyHwnd)
     : log(logger)
     , notifyHwnd_(notifyHwnd)
 {
+}
+
+void SocketThread::setQueueEmptyCb(std::function<void(const Contact& c)> queueEmptyCb) {
+    queueEmptyCb_ = std::move(queueEmptyCb);
 }
 
 void SocketThread::InitInThread() {
@@ -103,8 +114,11 @@ bool SocketThread::SendBuffer(const Contact& c, Buffer* buffer) {
         SOCKET s = contactData_[c];
         SocketData& data = socketData_[s];
         data.queue.push_back(buffer);
-        if (!data.isCorked) {
-            OnWrite(s);
+        if (!data.isCorked && !data.onWriteScheduled) {
+            data.onWriteScheduled = true;
+            RunInThread([this, s] {
+                OnWrite(s);
+            });
         }
         if (data.queue.size() > HIGH_WATERMARK) {
             data.isQueueFull = true;
@@ -223,9 +237,18 @@ void SocketThread::OnWrite(SOCKET s) {
     data.isCorked = false;
 
     SCOPE_EXIT {
-        if (data.queue.size() < LOW_WATERMARK) {
+        data.onWriteScheduled = !data.isCorked && !data.queue.empty();
+        if (data.onWriteScheduled) {
+            RunInThread([this, s] {
+                OnWrite(s);
+            });
+        }
+        if (data.isQueueFull && data.queue.size() < LOW_WATERMARK) {
             data.isQueueFull = false;
-}
+            if (queueEmptyCb_) {
+                queueEmptyCb_(data.contact);
+            }
+        }
     };
 
     int count = 0;

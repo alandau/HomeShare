@@ -23,12 +23,14 @@ protected:
     }
 
     void logStringImpl(LogLevel level, const std::wstring& s) {
-        std::time_t t = std::time(nullptr);
+        auto now = std::chrono::system_clock::now();
+        std::time_t t = std::chrono::system_clock::to_time_t(now);
+        int ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count() % 1000;
         struct tm tm;
         localtime_s(&tm, &t);
-        std::wstring timeStr = fmt::format(L"{}-{:02}-{:02} {:02}:{:02}:{:02}",
+        std::wstring timeStr = fmt::format(L"{}-{:02}-{:02} {:02}:{:02}:{:02}.{:03}",
             tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
-            tm.tm_hour, tm.tm_min, tm.tm_sec);
+            tm.tm_hour, tm.tm_min, tm.tm_sec, ms);
         auto levelToStr = [](LogLevel level) {
             switch (level) {
             case E: return L"Error";
@@ -80,7 +82,7 @@ private:
 LRESULT RootWindow::OnCreate()
 {
     logView_ = CreateWindow(WC_LISTVIEW, NULL,
-        WS_VISIBLE | WS_CHILD | WS_TABSTOP | LVS_NOSORTHEADER | LVS_SINGLESEL | LVS_REPORT,
+        WS_VISIBLE | WS_CHILD | WS_BORDER | WS_TABSTOP | LVS_NOSORTHEADER | LVS_SINGLESEL | LVS_REPORT,
         0, 0, 0, 0,
         GetHWND(),
         (HMENU)IDC_LOGVIEW,
@@ -100,7 +102,7 @@ LRESULT RootWindow::OnCreate()
     ListView_InsertColumn(logView_, 0, &lvc);
 
     lvc.mask = LVCF_TEXT | LVCF_WIDTH;
-    lvc.cx = 150;
+    lvc.cx = 200;
     lvc.pszText = TEXT("Time");
     ListView_InsertColumn(logView_, 1, &lvc);
 
@@ -141,7 +143,7 @@ LRESULT RootWindow::HandleMessage(UINT uMsg, WPARAM wParam, LPARAM lParam)
         if (logView_) {
             int cx = GET_X_LPARAM(lParam);
             int cy = GET_Y_LPARAM(lParam);
-            SetWindowPos(logView_, NULL, 0, cy / 2, cx, cy, SWP_NOZORDER | SWP_NOACTIVATE);
+            SetWindowPos(logView_, NULL, 0, cy / 2, cx, cy - cy / 2, SWP_NOZORDER | SWP_NOACTIVATE);
         }
         return 0;
 
@@ -191,7 +193,7 @@ RootWindow *RootWindow::Create()
 {
     RootWindow *self = new RootWindow();
     if (self->WinCreateWindow(0,
-            TEXT("Scratch"), WS_OVERLAPPEDWINDOW,
+            TEXT("HomeShare"), WS_OVERLAPPEDWINDOW,
             CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
             NULL, LoadMenu(g_hinst, MAKEINTRESOURCE(IDR_MENU1)))) {
         return self;
