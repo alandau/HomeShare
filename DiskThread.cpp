@@ -1,8 +1,9 @@
 #include "DiskThread.h"
 
-DiskThread::DiskThread(Logger* logger, SocketThreadApi* socketThread)
+DiskThread::DiskThread(Logger* logger, SocketThreadApi* socketThread, const std::wstring& receivePath)
     : log(*logger)
     , socketThread_(socketThread)
+    , receivePath_(receivePath)
 {
     socketThread_->setQueueEmptyCb([this](const Contact& c) {
         RunInThread([this, c] {
@@ -13,6 +14,13 @@ DiskThread::DiskThread(Logger* logger, SocketThreadApi* socketThread)
             uncorked_[c] = std::move(iter->second);
             corked_.erase(iter);
             DoWriteLoop();
+        });
+    });
+
+    socketThread_->setOnMessageCb([this](const Contact& c, Buffer::UniquePtr message) {
+        Buffer* p = message.release();
+        RunInThread([this, c, p]() {
+            OnMessageReceived(c, Buffer::UniquePtr(p));
         });
     });
 }
@@ -26,7 +34,7 @@ void DiskThread::Enqueue(const Contact& c, const std::wstring& filename) {
             corked_[c]->queue_.emplace_back(c, filename);
         } else {
             if (uncorked_.find(c) == uncorked_.end()) {
-                uncorked_[c] = std::make_unique<Queue>();
+                uncorked_[c] = std::make_unique<SendData>();
             }
             uncorked_[c]->queue_.emplace_back(c, filename);
             DoWriteLoop();
@@ -99,4 +107,30 @@ void DiskThread::DoWriteLoopImpl(Map::iterator iter) {
 
 bool DiskThread::SendBufferToContact(const Contact& c, Buffer* buffer) {
     return socketThread_->SendBuffer(c, buffer);
+}
+
+void DiskThread::OnMessageReceived(const Contact& c, Buffer::UniquePtr message) {
+    ReceiveData& data = receive_[c];
+    if (data.hReceiveFile == NULL) {
+        std::wstring filename = receivePath_ + L"\\ReceivedFile.txt";
+        HANDLE hFile = CreateFile(filename.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+            NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+
+        if (hFile == INVALID_HANDLE_VALUE) {
+            log.e(L"Can't create file {}", filename);
+            return;
+        }
+        
+        data.hReceiveFile = hFile;
+    }
+
+    while (message->readSize() != 0) {
+        DWORD count;
+        if (!WriteFile(data.hReceiveFile, message->readData(), message->readSize(), &count, NULL)) {
+            log.e(L"Error writing to file being received");
+            CloseHandle(data.hReceiveFile);
+            return;
+        }
+        message->adjustReadPos(count);
+    }
 }

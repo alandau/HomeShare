@@ -3,3 +3,4 @@ Release/
 x64/
 .vs/
 *.aps
+*.vcxproj.user

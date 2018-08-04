@@ -5,6 +5,13 @@
 
 class Buffer {
 public:
+    struct Deleter {
+        void operator()(Buffer* b) {
+            b->destroy();
+        }
+    };
+    using UniquePtr = std::unique_ptr<Buffer, Deleter>;
+
     static int count;
     static Buffer* create(size_t capacity) {
         uint8_t* p = new uint8_t[sizeof(Buffer) + capacity];

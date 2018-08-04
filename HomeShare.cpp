@@ -8,6 +8,16 @@
 #include <windowsx.h>
 #include <commctrl.h>
 #include <commdlg.h>
+#include <shlobj.h>
+
+static std::wstring GetDesktopPath() {
+    wchar_t path[MAX_PATH];
+    if (FAILED(SHGetFolderPath(NULL, CSIDL_DESKTOPDIRECTORY, NULL, SHGFP_TYPE_CURRENT, path))) {
+        return L"";
+    }
+    return path;
+}
+
 
 class ListViewLogger : public Logger {
 public:
@@ -122,12 +132,10 @@ LRESULT RootWindow::OnCreate()
     logger_.reset(new ListViewLogger(this, logView_));
     socketThread_.reset(new SocketThreadApi);
     socketThread_->Init(logger_.get(), GetHWND());
-    diskThread_.reset(new DiskThread(logger_.get(), socketThread_.get()));
+    diskThread_.reset(new DiskThread(logger_.get(), socketThread_.get(), GetDesktopPath()));
     return 0;
 }
 
-wchar_t *buf;
-int size;
 LRESULT RootWindow::HandleMessage(UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
     switch (uMsg) {
@@ -153,14 +161,6 @@ LRESULT RootWindow::HandleMessage(UINT uMsg, WPARAM wParam, LPARAM lParam)
         }
         return 0;
 
-    case WM_USER+100:
-        if (buf) {
-            delete[] buf;
-        }
-        buf = (wchar_t*)wParam;
-        size = lParam;
-        InvalidateRect(GetHWND(), NULL, TRUE);
-        return 0;
     case WM_COMMAND:
         switch (GET_WM_COMMAND_ID(wParam, lParam)) {
         case ID_FILE_SENDFILE:
@@ -203,11 +203,6 @@ RootWindow *RootWindow::Create()
 }
 
 void RootWindow::PaintContent(PAINTSTRUCT* pps) {
-    RECT rect;
-    GetClientRect(GetHWND(), &rect);
-    if (buf != nullptr) {
-        DrawText(pps->hdc, buf, size, &rect, 0);
-    }
 }
 
 void SetDpiAware() {

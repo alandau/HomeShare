@@ -9,7 +9,7 @@
 
 class DiskThread : public MessageThread {
 public:
-    DiskThread(Logger* logger, SocketThreadApi* socketThread);
+    DiskThread(Logger* logger, SocketThreadApi* socketThread, const std::wstring& receivePath);
     void Enqueue(const Contact& c, const std::wstring& filename);
 
 private:
@@ -23,19 +23,26 @@ private:
         HANDLE hFile = NULL;
         Buffer* buffer;
     };
-    struct Queue {
+    struct SendData {
         std::deque<QueueItem> queue_;
     };
-    using Map = std::unordered_map<Contact, std::unique_ptr<Queue>>;
+    struct ReceiveData {
+        HANDLE hReceiveFile = NULL;
+    };
+    using Map = std::unordered_map<Contact, std::unique_ptr<SendData>>;
 
     void DoWriteLoop();
     void DoWriteLoopImpl(Map::iterator iter);
     bool SendBufferToContact(const Contact& c, Buffer* buffer);
+    void OnMessageReceived(const Contact& c, Buffer::UniquePtr message);
 
     Logger& log;
     SocketThreadApi* socketThread_;
+    std::wstring receivePath_;
 
     Map corked_;
     Map uncorked_;
     Map paused_;
+
+    std::unordered_map<Contact, ReceiveData> receive_;
 };

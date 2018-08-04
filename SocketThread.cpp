@@ -14,12 +14,12 @@ struct SocketData {
     Contact contact;
     sockaddr addr;
 
-    // Fields for reading a message
+    // Input
     uint32_t messageLen = 0;
     uint32_t messageLenLen = 0;
-    uint8_t* message = nullptr;
-    uint32_t countSoFar = 0;
+    Buffer::UniquePtr message;
 
+    // Output
     bool isCorked = false;
     bool isQueueFull = false;
     bool onWriteScheduled = false;
@@ -37,6 +37,7 @@ public:
 
     SocketThread(Logger& logger, HWND notifyHwnd);
     void setQueueEmptyCb(std::function<void(const Contact& c)> queueEmptyCb);
+    void setOnMessageCb(std::function<void(const Contact& c, Buffer::UniquePtr message)> onMessageCb);
     bool SendBuffer(const Contact& c, Buffer* buffer);
 
 protected:
@@ -47,12 +48,13 @@ private:
     void CloseSocket(SOCKET s);
     void OnRead(SOCKET s);
     void OnWrite(SOCKET s);
-    void HandleIncomingMessage(SocketData& data, const uint8_t* message, uint32_t len);
+    void handleIncomingMessage(const Contact& c, Buffer::UniquePtr message);
 
     Logger& log;
     HWND notifyHwnd_;
     SOCKET serverSocket_;
     std::function<void(const Contact& c)> queueEmptyCb_;
+    std::function<void(const Contact& c, Buffer::UniquePtr message)> onMessageCb_;
     std::unordered_map<SOCKET, SocketData> socketData_;
     std::unordered_map<Contact, SOCKET> contactData_;
 };
@@ -69,6 +71,10 @@ void SocketThreadApi::setQueueEmptyCb(std::function<void(const Contact& c)> queu
     d->setQueueEmptyCb(std::move(queueEmptyCb));
 }
 
+void SocketThreadApi::setOnMessageCb(std::function<void(const Contact& c, Buffer::UniquePtr message)> onMessageCb) {
+    d->setOnMessageCb(std::move(onMessageCb));
+}
+
 bool SocketThreadApi::SendBuffer(const Contact& c, Buffer* buffer) {
     return d->RunInThreadWithResult([this, c, buffer] {
         return d->SendBuffer(c, buffer);
@@ -83,6 +89,10 @@ SocketThread::SocketThread(Logger& logger, HWND notifyHwnd)
 
 void SocketThread::setQueueEmptyCb(std::function<void(const Contact& c)> queueEmptyCb) {
     queueEmptyCb_ = std::move(queueEmptyCb);
+}
+
+void SocketThread::setOnMessageCb(std::function<void(const Contact& c, Buffer::UniquePtr message)> onMessageCb) {
+    onMessageCb_ = std::move(onMessageCb);
 }
 
 void SocketThread::InitInThread() {
@@ -192,14 +202,13 @@ void SocketThread::OnRead(SOCKET s) {
                 CloseSocket(s);
                 return;
             }
-            data.message = new uint8_t[data.messageLen];
-            data.countSoFar = 0;
+            data.message.reset(Buffer::create(data.messageLen));
         }
     }
 
     // Now read the message itself
-    while (data.countSoFar < data.messageLen) {
-        int count = recv(s, (char*)data.message, data.messageLen - data.countSoFar, 0);
+    while (data.message->writeSize() != 0) {
+        int count = recv(s, (char*)data.message->writeData(), data.message->writeSize(), 0);
         if (count < 0) {
             int err;
             if ((err = WSAGetLastError()) == WSAEWOULDBLOCK) {
@@ -212,20 +221,12 @@ void SocketThread::OnRead(SOCKET s) {
             log.e(L"End of file reading message from socket");
             CloseSocket(s);
         }
-        data.countSoFar += count;
+        data.message->adjustWritePos(count);
     }
 
     // Prepare for next message
     data.messageLenLen = 0;
-    HandleIncomingMessage(data, data.message, data.messageLen);
-}
-
-void SocketThread::HandleIncomingMessage(SocketData& data, const uint8_t* message, uint32_t len) {
-    wchar_t* wbuf = new wchar_t[len];
-    int wsize = MultiByteToWideChar(CP_UTF8, 0, (const char*)message, len, wbuf, len);
-    delete[] message;
-
-    PostMessage(notifyHwnd_, WM_USER+100, (WPARAM)wbuf, wsize);
+    handleIncomingMessage(Contact{ "host", 1234 }, std::move(data.message));
 }
 
 void SocketThread::OnWrite(SOCKET s) {
@@ -304,4 +305,8 @@ void SocketThread::onSocketEvent(SOCKET sock, int event, int error) {
         // Remote side closed, we do nothing, since after reading EOF, we'll close the socket
         break;
     }
+}
+
+void SocketThread::handleIncomingMessage(const Contact& c, Buffer::UniquePtr message) {
+    onMessageCb_(c, std::move(message));
 }

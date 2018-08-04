@@ -35,6 +35,7 @@ public:
     void Init(Logger* logger, HWND notifyHwnd);
     ~SocketThreadApi();
     void setQueueEmptyCb(std::function<void(const Contact& c)> queueEmptyCb);
+    void SocketThreadApi::setOnMessageCb(std::function<void(const Contact& c, Buffer::UniquePtr message)> onMessageCb);
     // Return true if should cork (this buffer is still enqueued)
     bool SendBuffer(const Contact& c, Buffer* buffer);
 private:
