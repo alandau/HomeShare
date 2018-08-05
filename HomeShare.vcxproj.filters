@@ -22,6 +22,9 @@
     <Filter Include="lib\fmt">
       <UniqueIdentifier>{24688efb-d480-457c-aafc-dc0959219381}</UniqueIdentifier>
     </Filter>
+    <Filter Include="proto">
+      <UniqueIdentifier>{e05b835e-e9c0-4998-8f5c-91a2459eb0d0}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="lib\win\window.h">
@@ -71,6 +74,12 @@
     </ClInclude>
     <ClInclude Include="DiskThread.h">
       <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="proto\file.h">
+      <Filter>proto</Filter>
+    </ClInclude>
+    <ClInclude Include="proto\Serializer.h">
+      <Filter>proto</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
