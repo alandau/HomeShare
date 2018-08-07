@@ -81,6 +81,9 @@
     <ClInclude Include="proto\Serializer.h">
       <Filter>proto</Filter>
     </ClInclude>
+    <ClInclude Include="lib\win\encoding.h">
+      <Filter>lib\win</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="HomeShare.cpp">

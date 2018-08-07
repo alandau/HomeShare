@@ -32,7 +32,7 @@ public:
         WM_SOCKET = WM_APP,
     };
 
-    enum { LOW_WATERMARK = 10, HIGH_WATERMARK = 100 };
+    enum { LOW_WATERMARK = 10, HIGH_WATERMARK = 20 };
     enum { MAX_BUFFERS_TO_SEND = 10 };
 
     SocketThread(Logger& logger, HWND notifyHwnd);
@@ -120,6 +120,10 @@ std::optional<LRESULT> SocketThread::HandleMessage(UINT uMsg, WPARAM wParam, LPA
 }
 
 bool SocketThread::SendBuffer(const Contact& c, Buffer* buffer) {
+    uint32_t size = buffer->readSize();
+    uint8_t* buf = buffer->prependHeader(sizeof(size));
+    memcpy(buf, &size, sizeof(size));
+
     if (contactData_.find(c) != contactData_.end()) {
         SOCKET s = contactData_[c];
         SocketData& data = socketData_[s];

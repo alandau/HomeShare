@@ -1,4 +1,7 @@
 #include "DiskThread.h"
+#include "proto/file.h"
+#include "proto/Serializer.h"
+#include "lib/win/encoding.h"
 
 DiskThread::DiskThread(Logger* logger, SocketThreadApi* socketThread, const std::wstring& receivePath)
     : log(*logger)
@@ -57,8 +60,8 @@ void DiskThread::DoWriteLoopImpl(Map::iterator iter) {
     }
     const Contact& c = iter->first;
     QueueItem& item = queue.front();
-    
-    if (item.hFile == NULL) {
+
+    if (item.state == QueueItem::State::SEND_HEADER) {
         HANDLE hFile = CreateFile(item.filename.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
             NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, NULL);
 
@@ -69,49 +72,94 @@ void DiskThread::DoWriteLoopImpl(Map::iterator iter) {
         }
 
         item.hFile = hFile;
+        item.state = QueueItem::State::SEND_DATA;
+        LARGE_INTEGER size;
+        GetFileSizeEx(hFile, &size);
+        SendFileHeader header;
+        header.name = Utf16ToUtf8(item.filename);
+        size_t backslash = header.name.rfind('\\');
+        if (backslash != std::string::npos) {
+            header.name = header.name.substr(backslash + 1);
+        }
+        header.size = size.QuadPart;
+        Buffer::UniquePtr buffer = Serializer().serialize(header);
+        if (SendBufferToContact(c, SENDFILE_HEADER, std::move(buffer))) {
+            return;
+        }
     }
 
-    while (true) {
-        item.buffer = Buffer::create(MAX_CHUNK);
-        DWORD count;
-        bool success = ReadFile(item.hFile, item.buffer->writeData() + sizeof(uint32_t),
-            item.buffer->writeSize() - sizeof(uint32_t), &count, NULL);
-        if (!success) {
-            log.e(L"Error reading from file '{}'", item.filename);
-            CloseHandle(item.hFile);
-            item.buffer->destroy();
-            queue.pop_back();
-            //CloseSocket(s);
-            return;
+    if (item.state == QueueItem::State::SEND_DATA) {
+        while (true) {
+            Buffer::UniquePtr buffer(Buffer::create(MAX_CHUNK));
+            DWORD count;
+            bool success = ReadFile(item.hFile, buffer->writeData(),
+                buffer->writeSize(), &count, NULL);
+            if (!success) {
+                log.e(L"Error reading from file '{}'", item.filename);
+                CloseHandle(item.hFile);
+                queue.pop_back();
+                //CloseSocket(s);
+                return;
+            }
+            if (count == 0) {
+                // EOF
+                log.i(L"Finished sending file '{}'", item.filename);
+                CloseHandle(item.hFile);
+                item.state = QueueItem::State::SEND_TRAILER;
+                //CloseSocket(s);
+                return;
+            }
+            buffer->adjustWritePos(count);
+            bool shouldCork = SendBufferToContact(c, SENDFILE_DATA, std::move(buffer));
+            if (shouldCork) {
+                return;
+            }
         }
-        if (count == 0) {
-            // EOF
-            log.i(L"Finished sending file '{}'", item.filename);
-            CloseHandle(item.hFile);
-            item.buffer->destroy();
-            queue.pop_back();
-            //CloseSocket(s);
-            return;
-        }
-        memcpy(item.buffer->writeData(), &count, sizeof(uint32_t));
-        item.buffer->adjustWritePos(count + sizeof(uint32_t));
-        bool shouldCork = SendBufferToContact(c, item.buffer);
-        item.buffer = nullptr;
-        if (shouldCork) {
-            corked_[c] = std::move(iter->second);
-            uncorked_.erase(iter);
-            return;
-        }
+    }
+
+    if (item.state == QueueItem::State::SEND_TRAILER) {
+        SendFileTrailer trailer;
+        trailer.checksum = 12345;
+        Buffer::UniquePtr buffer = Serializer().serialize(trailer);
+        // Ignore possible corking, since this is the last buffer
+        SendBufferToContact(c, SENDFILE_TRAILER, std::move(buffer));
+        queue.pop_back();
     }
 }
 
-bool DiskThread::SendBufferToContact(const Contact& c, Buffer* buffer) {
-    return socketThread_->SendBuffer(c, buffer);
+bool DiskThread::SendBufferToContact(const Contact& c, MessageType type, Buffer::UniquePtr buffer) {
+    Header header;
+    header.streamId = 5555;
+    header.type = type;
+    uint8_t* buf = buffer->prependHeader(sizeof(header));
+    memcpy(buf, &header, sizeof(header));
+    bool shouldCork = socketThread_->SendBuffer(c, buffer.release());
+    if (shouldCork) {
+        corked_[c] = std::move(uncorked_[c]);
+        uncorked_.erase(c);
+    }
+    return shouldCork;
 }
 
 void DiskThread::OnMessageReceived(const Contact& c, Buffer::UniquePtr message) {
     ReceiveData& data = receive_[c];
-    if (data.hReceiveFile == NULL) {
+
+    Header header;
+    memcpy(&header, message->buffer(), sizeof(header));
+    message->adjustReadPos(sizeof(header));
+
+    if (header.streamId != 5555) {
+        log.e(L"Bad streamId {}", header.streamId);
+        return;
+    }
+    if (data.state == ReceiveData::State::RECEIVE_HEADER) {
+        if (header.type != SENDFILE_HEADER) {
+            log.e(L"Expected type SENDFILE_HEADER, got {}", header.type);
+            return;
+        }
+        SendFileHeader fileHeader = Serializer().deserialize<SendFileHeader>(message.get());
+        log.i(L"Receiving file '{}' of size {}", Utf8ToUtf16(fileHeader.name), fileHeader.size);
+
         std::wstring filename = receivePath_ + L"\\ReceivedFile.txt";
         HANDLE hFile = CreateFile(filename.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
             NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
@@ -120,17 +168,32 @@ void DiskThread::OnMessageReceived(const Contact& c, Buffer::UniquePtr message) 
             log.e(L"Can't create file {}", filename);
             return;
         }
-        
-        data.hReceiveFile = hFile;
-    }
 
-    while (message->readSize() != 0) {
-        DWORD count;
-        if (!WriteFile(data.hReceiveFile, message->readData(), message->readSize(), &count, NULL)) {
-            log.e(L"Error writing to file being received");
+        data.hReceiveFile = hFile;
+        data.state = ReceiveData::State::RECEIVE_DATA_OR_TRAILER;
+    } else if (data.state == ReceiveData::State::RECEIVE_DATA_OR_TRAILER) {
+        if (header.type == SENDFILE_DATA) {
+            while (message->readSize() != 0) {
+                DWORD count;
+                if (!WriteFile(data.hReceiveFile, message->readData(), message->readSize(), &count, NULL)) {
+                    log.e(L"Error writing to file being received");
+                    CloseHandle(data.hReceiveFile);
+                    data.hReceiveFile = NULL;
+                    return;
+                }
+                message->adjustReadPos(count);
+            }
+        } else if (header.type == SENDFILE_TRAILER) {
+            SendFileTrailer fileTrailer = Serializer().deserialize<SendFileTrailer>(message.get());
+            log.i(L"Finished receiving file, checksum = {}", fileTrailer.checksum);
+            CloseHandle(data.hReceiveFile);
+            data.state = ReceiveData::State::RECEIVE_HEADER;
+            data.hReceiveFile = NULL;
+        } else {
+            log.e(L"Expected type SENDFILE_DATA or SENDFILE_TRAILER, got {}", header.type);
             CloseHandle(data.hReceiveFile);
             return;
         }
-        message->adjustReadPos(count);
     }
+
 }

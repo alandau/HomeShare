@@ -18,7 +18,7 @@ template<> struct hash<Contact> {
     typedef Contact argument_type;
     typedef std::size_t result_type;
     result_type operator()(const argument_type& c) const noexcept {
-        const result_type h1(std::hash<std::string>()(c.hostname));
+        const result_type h1(std::hash<std::string>()(c.hostname ? c.hostname : ""));
         const result_type h2(std::hash<unsigned short>()(c.port));
         return h1 ^ (h2 << 1);
     }

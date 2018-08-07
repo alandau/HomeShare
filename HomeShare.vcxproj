@@ -146,6 +146,7 @@
     <ClInclude Include="lib\fmt\printf.h" />
     <ClInclude Include="lib\fmt\ranges.h" />
     <ClInclude Include="lib\fmt\time.h" />
+    <ClInclude Include="lib\win\encoding.h" />
     <ClInclude Include="lib\win\MessageThread.h" />
     <ClInclude Include="lib\win\raii.h" />
     <ClInclude Include="lib\win\window.h" />

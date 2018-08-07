@@ -13,9 +13,9 @@ public:
     };
     using UniquePtr = std::unique_ptr<Buffer, Deleter>;
 
-    static int count;
+    enum { HEADER_EXTRA = 8 };
     static Buffer* create(size_t capacity) {
-        uint8_t* p = new uint8_t[sizeof(Buffer) + capacity];
+        uint8_t* p = new uint8_t[sizeof(Buffer) + capacity + HEADER_EXTRA];
         Buffer* b = new (p) Buffer(capacity);
         return b;
     }
@@ -46,9 +46,16 @@ public:
     void adjustReadPos(intptr_t diff) { readPos_ += diff; assert(readPos_ <= capacity()); }
     void adjustWritePos(intptr_t diff) { writePos_ += diff; assert(writePos_ <= capacity()); }
 
+    uint8_t* prependHeader(size_t size) {
+        buffer_ -= size;
+        capacity_ += size;
+        writePos_ += size;
+        assert(buffer_ >= (uint8_t*)(this + 1));
+        return buffer_;
+    }
 private:
     Buffer(size_t capacity)
-        : buffer_((uint8_t*)(this + 1))
+        : buffer_((uint8_t*)(this + 1) + HEADER_EXTRA)
         , capacity_(capacity)
     {}
 
