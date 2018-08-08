@@ -49,7 +49,9 @@ void DiskThread::Enqueue(const Contact& c, const std::wstring& filename) {
 void DiskThread::DoWriteLoop() {
     if (!uncorked_.empty()) {
         RunInThread([this] {
-            DoWriteLoopImpl(uncorked_.begin());
+            if (!uncorked_.empty()) {
+                DoWriteLoopImpl(uncorked_.begin());
+            }
         });
     }
 }
@@ -62,9 +64,7 @@ void DiskThread::DoWriteLoopImpl(Map::iterator iter) {
         return;
     }
     SCOPE_EXIT {
-        RunInThread([this] {
-            DoWriteLoopImpl(uncorked_.begin());
-        });
+        DoWriteLoop();
     };
     const Contact& c = iter->first;
     QueueItem& item = queue.front();
@@ -75,9 +75,10 @@ void DiskThread::DoWriteLoopImpl(Map::iterator iter) {
 
         if (hFile == INVALID_HANDLE_VALUE) {
             log.e(L"Can't open file {}", item.filename);
-            queue.pop_back();
+            queue.pop_front();
             return;
         }
+        log.i(L"Starting to send '{}'", item.filename);
 
         item.hFile = hFile;
         item.state = QueueItem::State::SEND_DATA;
@@ -106,7 +107,7 @@ void DiskThread::DoWriteLoopImpl(Map::iterator iter) {
             if (!success) {
                 log.e(L"Error reading from file '{}'", item.filename);
                 CloseHandle(item.hFile);
-                queue.pop_back();
+                queue.pop_front();
                 //CloseSocket(s);
                 return;
             }
@@ -133,7 +134,7 @@ void DiskThread::DoWriteLoopImpl(Map::iterator iter) {
         Buffer::UniquePtr buffer = Serializer().serialize(trailer);
         // Ignore possible corking, since this is the last buffer
         SendBufferToContact(c, SENDFILE_TRAILER, std::move(buffer));
-        queue.pop_back();
+        queue.pop_front();
     }
 }
 
