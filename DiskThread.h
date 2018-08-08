@@ -14,6 +14,7 @@ public:
     void Enqueue(const Contact& c, const std::wstring& filename);
 
 private:
+    enum { MAX_BUFFERS_TO_SEND = 10 };
     struct QueueItem {
         enum class State { SEND_HEADER, SEND_DATA, SEND_TRAILER };
         QueueItem(const Contact& c, const std::wstring& filename)

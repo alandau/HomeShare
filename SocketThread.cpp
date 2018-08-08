@@ -32,7 +32,7 @@ public:
         WM_SOCKET = WM_APP,
     };
 
-    enum { LOW_WATERMARK = 10, HIGH_WATERMARK = 20 };
+    enum { LOW_WATERMARK = 10, HIGH_WATERMARK = 100 };
     enum { MAX_BUFFERS_TO_SEND = 10 };
 
     SocketThread(Logger& logger, HWND notifyHwnd);

@@ -2,6 +2,7 @@
 #include "proto/file.h"
 #include "proto/Serializer.h"
 #include "lib/win/encoding.h"
+#include "lib/win/raii.h"
 
 DiskThread::DiskThread(Logger* logger, SocketThreadApi* socketThread, const std::wstring& receivePath)
     : log(*logger)
@@ -46,8 +47,10 @@ void DiskThread::Enqueue(const Contact& c, const std::wstring& filename) {
 }
 
 void DiskThread::DoWriteLoop() {
-    while (!uncorked_.empty()) {
-        DoWriteLoopImpl(uncorked_.begin());
+    if (!uncorked_.empty()) {
+        RunInThread([this] {
+            DoWriteLoopImpl(uncorked_.begin());
+        });
     }
 }
 
@@ -58,6 +61,11 @@ void DiskThread::DoWriteLoopImpl(Map::iterator iter) {
         uncorked_.erase(iter);
         return;
     }
+    SCOPE_EXIT {
+        RunInThread([this] {
+            DoWriteLoopImpl(uncorked_.begin());
+        });
+    };
     const Contact& c = iter->first;
     QueueItem& item = queue.front();
 
@@ -89,6 +97,7 @@ void DiskThread::DoWriteLoopImpl(Map::iterator iter) {
     }
 
     if (item.state == QueueItem::State::SEND_DATA) {
+        int numBuffers = 0;
         while (true) {
             Buffer::UniquePtr buffer(Buffer::create(MAX_CHUNK));
             DWORD count;
@@ -111,7 +120,8 @@ void DiskThread::DoWriteLoopImpl(Map::iterator iter) {
             }
             buffer->adjustWritePos(count);
             bool shouldCork = SendBufferToContact(c, SENDFILE_DATA, std::move(buffer));
-            if (shouldCork) {
+            numBuffers++;
+            if (shouldCork || numBuffers >= MAX_BUFFERS_TO_SEND) {
                 return;
             }
         }
