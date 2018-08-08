@@ -169,18 +169,19 @@ void DiskThread::OnMessageReceived(const Contact& c, Buffer::UniquePtr message) 
             return;
         }
         SendFileHeader fileHeader = Serializer().deserialize<SendFileHeader>(message.get());
-        log.i(L"Receiving file '{}' of size {}", Utf8ToUtf16(fileHeader.name), fileHeader.size);
+        std::wstring origFilename = Utf8ToUtf16(fileHeader.name);
+        log.i(L"Receiving file '{}' of size {}", origFilename, fileHeader.size);
 
-        std::wstring filename = receivePath_ + L"\\ReceivedFile.txt";
-        HANDLE hFile = CreateFile(filename.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
-            NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+        std::wstring filename;
+        HANDLE hFile = GetReceiveFile(origFilename, filename);
 
         if (hFile == INVALID_HANDLE_VALUE) {
-            log.e(L"Can't create file {}", filename);
+            log.e(L"Can't create file {}", origFilename);
             return;
         }
 
         data.hReceiveFile = hFile;
+        data.receiveFilename = filename;
         data.state = ReceiveData::State::RECEIVE_DATA_OR_TRAILER;
     } else if (data.state == ReceiveData::State::RECEIVE_DATA_OR_TRAILER) {
         if (header.type == SENDFILE_DATA) {
@@ -198,8 +199,11 @@ void DiskThread::OnMessageReceived(const Contact& c, Buffer::UniquePtr message) 
             SendFileTrailer fileTrailer = Serializer().deserialize<SendFileTrailer>(message.get());
             log.i(L"Finished receiving file, checksum = {}", fileTrailer.checksum);
             CloseHandle(data.hReceiveFile);
-            data.state = ReceiveData::State::RECEIVE_HEADER;
             data.hReceiveFile = NULL;
+            // The move will fail if the destination file exists, and the .part file will live on.
+            // This is better than overwriting an existing file
+            MoveFile((data.receiveFilename + L".part").c_str(), data.receiveFilename.c_str());
+            data.state = ReceiveData::State::RECEIVE_HEADER;
         } else {
             log.e(L"Expected type SENDFILE_DATA or SENDFILE_TRAILER, got {}", header.type);
             CloseHandle(data.hReceiveFile);
@@ -207,4 +211,41 @@ void DiskThread::OnMessageReceived(const Contact& c, Buffer::UniquePtr message) 
         }
     }
 
+}
+
+HANDLE DiskThread::GetReceiveFile(const std::wstring& origFilename, std::wstring& filename) {
+    if (origFilename.find_first_of(L"\\:") != std::wstring::npos) {
+        return INVALID_HANDLE_VALUE;
+    }
+    for (int i = 0; i < 20; i++) {
+        std::wstring tempFilename = origFilename;
+        if (i != 0) {
+            size_t dotPos = tempFilename.rfind(L'.');
+            if (dotPos == std::wstring::npos) {
+                tempFilename += L"-" + std::to_wstring(i);
+            } else {
+                tempFilename = tempFilename.substr(0, dotPos) + L"-" + std::to_wstring(i) + tempFilename.substr(dotPos);
+            }
+        }
+        std::wstring candidateFilename = receivePath_ + L"\\" + tempFilename;
+        std::wstring candidateFilenamePart = candidateFilename + L".part";
+
+        HANDLE hFile = CreateFile(candidateFilename.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+            NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_DELETE_ON_CLOSE, NULL);
+        if (hFile == INVALID_HANDLE_VALUE) {
+            continue;
+        }
+
+        HANDLE hPartFile = CreateFile(candidateFilenamePart.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+            NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
+        if (hPartFile == INVALID_HANDLE_VALUE) {
+            CloseHandle(hFile);
+            continue;
+        }
+
+        CloseHandle(hFile);
+        filename = candidateFilename;
+        return hPartFile;
+    }
+    return INVALID_HANDLE_VALUE;
 }

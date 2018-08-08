@@ -33,6 +33,7 @@ private:
         enum class State { RECEIVE_HEADER, RECEIVE_DATA_OR_TRAILER };
         State state = State::RECEIVE_HEADER;
         HANDLE hReceiveFile = NULL;
+        std::wstring receiveFilename;
     };
     using Map = std::unordered_map<Contact, std::unique_ptr<SendData>>;
 
@@ -40,6 +41,8 @@ private:
     void DoWriteLoopImpl(Map::iterator iter);
     bool SendBufferToContact(const Contact& c, MessageType type, Buffer::UniquePtr buffer);
     void OnMessageReceived(const Contact& c, Buffer::UniquePtr message);
+
+    HANDLE GetReceiveFile(const std::wstring& origFilename, std::wstring& filename);
 
     Logger& log;
     SocketThreadApi* socketThread_;
