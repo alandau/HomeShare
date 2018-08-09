@@ -74,10 +74,14 @@ private:
 };
 
 struct ContactData {
+    enum class ConnectState {
+        Disconnected, Connecting, Connected
+    };
     Contact c;
     std::wstring displayName;
     std::string host;
     uint16_t port;
+    ConnectState connectState = ConnectState::Disconnected;
 };
 
 class RootWindow : public Window
@@ -142,7 +146,7 @@ LRESULT RootWindow::OnCreate()
     ImageList_AddIcon(icons, LoadIcon(NULL, IDI_INFORMATION));
     ListView_SetImageList(logView_, icons, LVSIL_SMALL);
 
-    contactData_.push_back({ {"127.0.0.1", 8890}, L"Me" , "127.0.0.1", 8890});
+    contactData_.push_back({ {"pubkey"}, L"Me" , "127.0.0.1", 8890});
 
     contactView_ = CreateWindow(WC_LISTVIEW, NULL,
         WS_VISIBLE | WS_CHILD | WS_BORDER | WS_TABSTOP | LVS_NOSORTHEADER | LVS_OWNERDATA | LVS_SINGLESEL | LVS_REPORT,
@@ -162,11 +166,33 @@ LRESULT RootWindow::OnCreate()
     lvc.pszText = TEXT("Contact");
     ListView_InsertColumn(contactView_, 0, &lvc);
     
+    lvc.mask = LVCF_TEXT | LVCF_WIDTH;
+    lvc.cx = 150;
+    lvc.pszText = TEXT("State");
+    ListView_InsertColumn(contactView_, 1, &lvc);
+
     ListView_SetItemCount(contactView_, contactData_.size());
 
     logger_.reset(new ListViewLogger(this, logView_));
     socketThread_.reset(new SocketThreadApi);
     socketThread_->Init(logger_.get(), GetHWND());
+    socketThread_->setOnConnectCb([this](const Contact& c, bool connected) {
+        RunInThread([this, c, connected] {
+            int index = -1;
+            for (int i = 0; i < (int)contactData_.size(); i++) {
+                if (contactData_[i].c == c) {
+                    index = i;
+                    break;
+                }
+            }
+            assert(index != -1);
+            contactData_[index].connectState = connected
+                ? ContactData::ConnectState::Connected
+                : ContactData::ConnectState::Disconnected;
+            ListView_RedrawItems(contactView_, index, index);
+            UpdateWindow(contactView_);
+        });
+    });
     diskThread_.reset(new DiskThread(logger_.get(), socketThread_.get(), GetDesktopPath()));
     return 0;
 }
@@ -184,13 +210,24 @@ LRESULT RootWindow::OnNotify(NMHDR *pnm) {
         if (nma->iItem == -1) {
             break;
         }
+        ContactData& data = contactData_[nma->iItem];
+        bool conn = data.connectState == ContactData::ConnectState::Connected;
+        HMENU hMenu = CreatePopupMenu();
+        AppendMenu(hMenu, MF_STRING | (conn ? MF_GRAYED : 0), 1, L"Connect");
+        AppendMenu(hMenu, MF_STRING | (!conn ? MF_GRAYED : 0), 2, L"Send File");
         POINT p;
         GetCursorPos(&p);
-        HMENU hMenu = CreatePopupMenu();
-        AppendMenu(hMenu, MF_STRING, 1, L"Send File");
         int item = TrackPopupMenu(hMenu, TPM_RETURNCMD, p.x, p.y, 0, GetHWND(), NULL);
-        if (item == 1) {
-            SelectAndSendFile(contactData_[nma->iItem]);
+        switch (item) {
+        case 1:
+            data.connectState = ContactData::ConnectState::Connecting;
+            socketThread_->Connect(data.c, data.host, data.port);
+            ListView_RedrawItems(contactView_, nma->iItem, nma->iItem);
+            UpdateWindow(contactView_);
+            break;
+        case 2:
+            SelectAndSendFile(data);
+            break;
         }
         break;
     }
@@ -206,7 +243,16 @@ void RootWindow::OnGetDispInfo(NMLVDISPINFO* pnmv) {
     ContactData& data = contactData_[index];
 
     if (pnmv->item.mask & LVIF_TEXT) {
-        pnmv->item.pszText = const_cast<LPWSTR>(data.displayName.c_str());
+        switch (pnmv->item.iSubItem) {
+        case 0: 
+            pnmv->item.pszText = const_cast<LPWSTR>(data.displayName.c_str());
+            break;
+        case 1:
+            pnmv->item.pszText =
+                data.connectState == ContactData::ConnectState::Connected ? L"Connected" :
+                data.connectState == ContactData::ConnectState::Disconnected ? L"Disconnected" :
+                data.connectState == ContactData::ConnectState::Connecting ? L"Connecting" : L"";
+        }
     }
     
     if (pnmv->item.mask & LVIF_IMAGE) {

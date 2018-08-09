@@ -38,7 +38,9 @@ public:
     SocketThread(Logger& logger, HWND notifyHwnd);
     void setQueueEmptyCb(std::function<void(const Contact& c)> queueEmptyCb);
     void setOnMessageCb(std::function<void(const Contact& c, Buffer::UniquePtr message)> onMessageCb);
+    void setOnConnectCb(std::function<void(const Contact& c, bool connected)> cb);
     bool SendBuffer(const Contact& c, Buffer* buffer);
+    void Connect(const Contact& c, const std::string& hostname, uint16_t port);
 
 protected:
     std::optional<LRESULT> HandleMessage(UINT uMsg, WPARAM wParam, LPARAM lParam) override;
@@ -46,6 +48,7 @@ protected:
 private:
     void onSocketEvent(SOCKET s, int event, int error);
     void CloseSocket(SOCKET s);
+    void OnConnect(SOCKET s);
     void OnRead(SOCKET s);
     void OnWrite(SOCKET s);
     void handleIncomingMessage(const Contact& c, Buffer::UniquePtr message);
@@ -55,6 +58,7 @@ private:
     SOCKET serverSocket_;
     std::function<void(const Contact& c)> queueEmptyCb_;
     std::function<void(const Contact& c, Buffer::UniquePtr message)> onMessageCb_;
+    std::function<void(const Contact& c, bool connected)> onConnectCb_;
     std::unordered_map<SOCKET, SocketData> socketData_;
     std::unordered_map<Contact, SOCKET> contactData_;
 };
@@ -80,6 +84,15 @@ bool SocketThreadApi::SendBuffer(const Contact& c, Buffer* buffer) {
         return d->SendBuffer(c, buffer);
     });
 }
+void SocketThreadApi::setOnConnectCb(std::function<void(const Contact& c, bool connected)> cb) {
+    d->setOnConnectCb(std::move(cb));
+}
+
+void SocketThreadApi::Connect(const Contact& c, const std::string& hostname, uint16_t port) {
+    d->RunInThread([this, c, hostname, port] {
+        d->Connect(c, hostname, port);
+    });
+}
 
 SocketThread::SocketThread(Logger& logger, HWND notifyHwnd)
     : log(logger)
@@ -93,6 +106,10 @@ void SocketThread::setQueueEmptyCb(std::function<void(const Contact& c)> queueEm
 
 void SocketThread::setOnMessageCb(std::function<void(const Contact& c, Buffer::UniquePtr message)> onMessageCb) {
     onMessageCb_ = std::move(onMessageCb);
+}
+
+void SocketThread::setOnConnectCb(std::function<void(const Contact& c, bool connected)> cb) {
+    onConnectCb_ = std::move(cb);
 }
 
 void SocketThread::InitInThread() {
@@ -119,38 +136,21 @@ std::optional<LRESULT> SocketThread::HandleMessage(UINT uMsg, WPARAM wParam, LPA
     return std::nullopt;
 }
 
-bool SocketThread::SendBuffer(const Contact& c, Buffer* buffer) {
-    uint32_t size = buffer->readSize();
-    uint8_t* buf = buffer->prependHeader(sizeof(size));
-    memcpy(buf, &size, sizeof(size));
-
-    if (contactData_.find(c) != contactData_.end()) {
-        SOCKET s = contactData_[c];
-        SocketData& data = socketData_[s];
-        data.queue.push_back(buffer);
-        if (!data.isCorked && !data.onWriteScheduled) {
-            data.onWriteScheduled = true;
-            RunInThread([this, s] {
-                OnWrite(s);
-            });
-        }
-        if (data.queue.size() > HIGH_WATERMARK) {
-            data.isQueueFull = true;
-        }
-        return data.isQueueFull;
-    }
-
+void SocketThread::Connect(const Contact& c, const std::string& hostname, uint16_t port) {
     SOCKET s = socket(AF_INET, SOCK_STREAM, 0);
     sockaddr_in addr = { 0 };
     addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = inet_addr(c.hostname);
-    addr.sin_port = htons(c.port);
+    addr.sin_addr.s_addr = inet_addr(hostname.c_str());
+    addr.sin_port = htons(port);
     WSAAsyncSelect(s, GetHWND(), WM_SOCKET, FD_CONNECT | FD_READ | FD_WRITE | FD_CLOSE);
 
+    auto it = contactData_.find(c);
+    if (it != contactData_.end()) {
+        CloseSocket(it->second);
+    }
     contactData_[c] = s;
     SocketData& data = socketData_[s];
     data.contact = c;
-    data.queue.push_back(buffer);
     data.isCorked = true;
 
     int res = connect(s, (sockaddr*)&addr, sizeof(addr));
@@ -158,11 +158,34 @@ bool SocketThread::SendBuffer(const Contact& c, Buffer* buffer) {
         CloseSocket(s);
         log.e(L"Can't connect, WSAGetLastError={}", res);
     }
+}
 
-    return false;
+bool SocketThread::SendBuffer(const Contact& c, Buffer* buffer) {
+    assert(contactData_.find(c) != contactData_.end());
+
+    uint32_t size = buffer->readSize();
+    uint8_t* buf = buffer->prependHeader(sizeof(size));
+    memcpy(buf, &size, sizeof(size));
+
+    SOCKET s = contactData_[c];
+    SocketData& data = socketData_[s];
+    data.queue.push_back(buffer);
+    if (!data.isCorked && !data.onWriteScheduled) {
+        data.onWriteScheduled = true;
+        RunInThread([this, s] {
+            OnWrite(s);
+        });
+    }
+    if (data.queue.size() > HIGH_WATERMARK) {
+        data.isQueueFull = true;
+    }
+    return data.isQueueFull;
 }
 
 void SocketThread::CloseSocket(SOCKET s) {
+    if (onConnectCb_) {
+        onConnectCb_(socketData_[s].contact, false);
+    }
     closesocket(s);
     contactData_.erase(socketData_[s].contact);
     socketData_.erase(s);
@@ -230,7 +253,7 @@ void SocketThread::OnRead(SOCKET s) {
 
     // Prepare for next message
     data.messageLenLen = 0;
-    handleIncomingMessage(Contact{ "host", 1234 }, std::move(data.message));
+    handleIncomingMessage(Contact{ "blah" }, std::move(data.message));
 }
 
 void SocketThread::OnWrite(SOCKET s) {
@@ -299,6 +322,9 @@ void SocketThread::onSocketEvent(SOCKET sock, int event, int error) {
         WSAAsyncSelect(clientSock, GetHWND(), WM_SOCKET, FD_READ | FD_WRITE | FD_CLOSE);
         break;
     }
+    case FD_CONNECT:
+        OnConnect(sock);
+        break;
     case FD_READ:
         OnRead(sock);
         break;
@@ -306,8 +332,25 @@ void SocketThread::onSocketEvent(SOCKET sock, int event, int error) {
         OnWrite(sock);
         break;
     case FD_CLOSE:
+        OnRead(sock);
         // Remote side closed, we do nothing, since after reading EOF, we'll close the socket
         break;
+    }
+}
+
+void SocketThread::OnConnect(SOCKET s) {
+    if (socketData_.find(s) == socketData_.end()) {
+        return;
+    }
+    SocketData& data = socketData_[s];
+    data.isCorked = false;
+
+    if (onConnectCb_) {
+        onConnectCb_(data.contact, true);
+    }
+
+    if (queueEmptyCb_) {
+        queueEmptyCb_(data.contact);
     }
 }
 
