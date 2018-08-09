@@ -4,6 +4,7 @@
 //
 #define IDR_MENU1                       101
 #define IDC_LOGVIEW                     102
+#define IDC_CONTACTVIEW                 103
 #define ID_FILE_SENDFILE                40001
 
 // Next default values for new objects
@@ -13,6 +14,6 @@
 #define _APS_NEXT_RESOURCE_VALUE        102
 #define _APS_NEXT_COMMAND_VALUE         40002
 #define _APS_NEXT_CONTROL_VALUE         1001
-#define _APS_NEXT_SYMED_VALUE           102
+#define _APS_NEXT_SYMED_VALUE           104
 #endif
 #endif

@@ -73,6 +73,13 @@ private:
     HWND listView_;
 };
 
+struct ContactData {
+    Contact c;
+    std::wstring displayName;
+    std::string host;
+    uint16_t port;
+};
+
 class RootWindow : public Window
 {
 public:
@@ -82,11 +89,17 @@ public:
 protected:
     LRESULT HandleMessage(UINT uMsg, WPARAM wParam, LPARAM lParam);
     LRESULT OnCreate();
+    LRESULT OnNotify(NMHDR* pnm);
+    void OnGetDispInfo(NMLVDISPINFO* pnmv);
 private:
     HWND logView_;
+    HWND contactView_;
+    std::vector<ContactData> contactData_;
     std::unique_ptr<ListViewLogger> logger_;
     std::unique_ptr<SocketThreadApi> socketThread_;
     std::unique_ptr<DiskThread> diskThread_;
+
+    void SelectAndSendFile(const ContactData& contactData);
 };
 
 LRESULT RootWindow::OnCreate()
@@ -129,11 +142,80 @@ LRESULT RootWindow::OnCreate()
     ImageList_AddIcon(icons, LoadIcon(NULL, IDI_INFORMATION));
     ListView_SetImageList(logView_, icons, LVSIL_SMALL);
 
+    contactData_.push_back({ {"127.0.0.1", 8890}, L"Me" , "127.0.0.1", 8890});
+
+    contactView_ = CreateWindow(WC_LISTVIEW, NULL,
+        WS_VISIBLE | WS_CHILD | WS_BORDER | WS_TABSTOP | LVS_NOSORTHEADER | LVS_OWNERDATA | LVS_SINGLESEL | LVS_REPORT,
+        0, 0, 0, 0,
+        GetHWND(),
+        (HMENU)IDC_CONTACTVIEW,
+        g_hinst,
+        NULL);
+
+    if (!contactView_) return -1;
+
+    ListView_SetExtendedListViewStyleEx(contactView_,
+        LVS_EX_FULLROWSELECT, LVS_EX_FULLROWSELECT);
+
+    lvc.mask = LVCF_TEXT | LVCF_WIDTH;
+    lvc.cx = 300;
+    lvc.pszText = TEXT("Contact");
+    ListView_InsertColumn(contactView_, 0, &lvc);
+    
+    ListView_SetItemCount(contactView_, contactData_.size());
+
     logger_.reset(new ListViewLogger(this, logView_));
     socketThread_.reset(new SocketThreadApi);
     socketThread_->Init(logger_.get(), GetHWND());
     diskThread_.reset(new DiskThread(logger_.get(), socketThread_.get(), GetDesktopPath()));
     return 0;
+}
+
+LRESULT RootWindow::OnNotify(NMHDR *pnm) {
+    if (pnm->hwndFrom != contactView_) {
+        return 0;
+    }
+    switch (pnm->code) {
+    case LVN_GETDISPINFO:
+        OnGetDispInfo(CONTAINING_RECORD(pnm, NMLVDISPINFO, hdr));
+        break;
+    case NM_RCLICK: {
+        NMITEMACTIVATE* nma = CONTAINING_RECORD(pnm, NMITEMACTIVATE, hdr);
+        if (nma->iItem == -1) {
+            break;
+        }
+        POINT p;
+        GetCursorPos(&p);
+        HMENU hMenu = CreatePopupMenu();
+        AppendMenu(hMenu, MF_STRING, 1, L"Send File");
+        int item = TrackPopupMenu(hMenu, TPM_RETURNCMD, p.x, p.y, 0, GetHWND(), NULL);
+        if (item == 1) {
+            SelectAndSendFile(contactData_[nma->iItem]);
+        }
+        break;
+    }
+    }
+    return 0;
+}
+
+void RootWindow::OnGetDispInfo(NMLVDISPINFO* pnmv) {
+    size_t index = (size_t)pnmv->item.iItem;
+    if (index >= contactData_.size()) {
+        return;
+    }
+    ContactData& data = contactData_[index];
+
+    if (pnmv->item.mask & LVIF_TEXT) {
+        pnmv->item.pszText = const_cast<LPWSTR>(data.displayName.c_str());
+    }
+    
+    if (pnmv->item.mask & LVIF_IMAGE) {
+        pnmv->item.iImage = -1;
+    }
+
+    if (pnmv->item.mask & LVIF_STATE) {
+        pnmv->item.state = 0;
+    }
 }
 
 LRESULT RootWindow::HandleMessage(UINT uMsg, WPARAM wParam, LPARAM lParam)
@@ -147,13 +229,17 @@ LRESULT RootWindow::HandleMessage(UINT uMsg, WPARAM wParam, LPARAM lParam)
         PostQuitMessage(0);
         break;
 
-    case WM_SIZE:
+    case WM_SIZE: {
+        int cx = GET_X_LPARAM(lParam);
+        int cy = GET_Y_LPARAM(lParam);
+        if (contactView_) {
+            SetWindowPos(contactView_, NULL, 0, 0, cx, cy / 2, SWP_NOZORDER | SWP_NOACTIVATE);
+        }
         if (logView_) {
-            int cx = GET_X_LPARAM(lParam);
-            int cy = GET_Y_LPARAM(lParam);
             SetWindowPos(logView_, NULL, 0, cy / 2, cx, cy - cy / 2, SWP_NOZORDER | SWP_NOACTIVATE);
         }
         return 0;
+    }
 
     case WM_SETFOCUS:
         if (logView_) {
@@ -161,32 +247,36 @@ LRESULT RootWindow::HandleMessage(UINT uMsg, WPARAM wParam, LPARAM lParam)
         }
         return 0;
 
+    case WM_NOTIFY:
+        return OnNotify(reinterpret_cast<NMHDR*>(lParam));
+
     case WM_COMMAND:
         switch (GET_WM_COMMAND_ID(wParam, lParam)) {
         case ID_FILE_SENDFILE:
-            wchar_t filename[MAX_PATH];
-            filename[0] = L'\0';
-            OPENFILENAME ofn = { 0 };
-            ofn.lStructSize = sizeof(ofn);
-            ofn.hwndOwner = GetHWND();
-            ofn.lpstrFilter = L"All Files (*.*)\0*.*\0";
-            ofn.lpstrFile = filename;
-            ofn.nMaxFile = MAX_PATH;
-            ofn.lpstrTitle = L"Select file to send";
-            ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
-
-            if (GetOpenFileName(&ofn)) {
-                Contact c;
-                c.hostname = "127.0.0.1";
-                c.port = 8890;
-                diskThread_->Enqueue(c, filename);
-            }
             break;
         }
         return 0;
     }
 
     return Window::HandleMessage(uMsg, wParam, lParam);
+}
+
+void RootWindow::SelectAndSendFile(const ContactData& contactData)
+{
+    wchar_t filename[MAX_PATH];
+    filename[0] = L'\0';
+    OPENFILENAME ofn = { 0 };
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = GetHWND();
+    ofn.lpstrFilter = L"All Files (*.*)\0*.*\0";
+    ofn.lpstrFile = filename;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.lpstrTitle = L"Select file to send";
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+
+    if (GetOpenFileName(&ofn)) {
+        diskThread_->Enqueue(contactData.c, filename);
+    }
 }
 
 RootWindow *RootWindow::Create()
