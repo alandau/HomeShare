@@ -1,5 +1,6 @@
 #include "lib/win/window.h"
 #include "lib/win/raii.h"
+#include "lib/win/encoding.h"
 #include "SocketThread.h"
 #include "DiskThread.h"
 #include "Logger.h"
@@ -9,6 +10,9 @@
 #include <commctrl.h>
 #include <commdlg.h>
 #include <shlobj.h>
+#include <shellapi.h>
+
+std::string g_remoteIp;
 
 static std::wstring GetDesktopPath() {
     wchar_t path[MAX_PATH];
@@ -147,6 +151,9 @@ LRESULT RootWindow::OnCreate()
     ListView_SetImageList(logView_, icons, LVSIL_SMALL);
 
     contactData_.push_back({ {"pubkey"}, L"Me" , "127.0.0.1", 8890});
+    if (!g_remoteIp.empty()) {
+        contactData_.push_back({ { "pubkey2" }, L"Other" , g_remoteIp, 8890 });
+    }
 
     contactView_ = CreateWindow(WC_LISTVIEW, NULL,
         WS_VISIBLE | WS_CHILD | WS_BORDER | WS_TABSTOP | LVS_NOSORTHEADER | LVS_OWNERDATA | LVS_SINGLESEL | LVS_REPORT,
@@ -185,7 +192,10 @@ LRESULT RootWindow::OnCreate()
                     break;
                 }
             }
-            assert(index != -1);
+            if (index == -1) {
+                // Can happen if the remote end which is not a contact connected/disconnected to us
+                return;
+            }
             contactData_[index].connectState = connected
                 ? ContactData::ConnectState::Connected
                 : ContactData::ConnectState::Disconnected;
@@ -361,6 +371,13 @@ WinMain(HINSTANCE hinst, HINSTANCE, LPSTR, int nShowCmd)
     SetDpiAware();
 
     g_hinst = hinst;
+
+    int argc;
+    LPWSTR* args = CommandLineToArgvW(GetCommandLine(), &argc);
+    if (args[1]) {
+        g_remoteIp = Utf16ToUtf8(args[1]);
+    }
+
     ComInit comInit;
     InitCommonControls();
 
