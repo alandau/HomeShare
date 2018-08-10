@@ -33,14 +33,20 @@ private:
 
 
 MessageThread::MessageThread()
-    : thread_(std::thread([this] { Loop(); }))
 {}
 
 MessageThread::~MessageThread() {
+    if (!thread_.joinable()) {
+        return;
+    }
     RunInThread([] {
         PostQuitMessage(0);
     });
     thread_.join();
+}
+
+void MessageThread::Start() {
+    thread_ = std::thread([this] { Loop(); });
 }
 
 void MessageThread::RunInThread(std::function<void(void)> func) {

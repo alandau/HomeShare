@@ -204,6 +204,7 @@ LRESULT RootWindow::OnCreate()
         });
     });
     diskThread_.reset(new DiskThread(logger_.get(), socketThread_.get(), GetDesktopPath()));
+    diskThread_->Start();
     return 0;
 }
 
@@ -373,9 +374,9 @@ WinMain(HINSTANCE hinst, HINSTANCE, LPSTR, int nShowCmd)
     g_hinst = hinst;
 
     int argc;
-    LPWSTR* args = CommandLineToArgvW(GetCommandLine(), &argc);
-    if (args[1]) {
-        g_remoteIp = Utf16ToUtf8(args[1]);
+    LPWSTR* argv = CommandLineToArgvW(GetCommandLine(), &argc);
+    if (argc > 1) {
+        g_remoteIp = Utf16ToUtf8(argv[1]);
     }
 
     ComInit comInit;

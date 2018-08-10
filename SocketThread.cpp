@@ -65,6 +65,7 @@ private:
 
 void SocketThreadApi::Init(Logger* logger, HWND notifyHwnd) {
     d = new SocketThread(*logger, notifyHwnd);
+    d->Start();
 }
 
 SocketThreadApi::~SocketThreadApi() {
@@ -114,7 +115,10 @@ void SocketThread::setOnConnectCb(std::function<void(const Contact& c, bool conn
 
 void SocketThread::InitInThread() {
     WSADATA wsd;
-    WSAStartup(MAKEWORD(2, 2), &wsd);
+    if (WSAStartup(MAKEWORD(2, 2), &wsd) != 0) {
+        log.e(L"WSAStartup error {}", WSAGetLastError());
+        return;
+    }
     serverSocket_ = socket(AF_INET, SOCK_STREAM, 0);
     sockaddr_in addr = { 0 };
     addr.sin_family = AF_INET;
