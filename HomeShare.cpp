@@ -23,6 +23,31 @@ static std::wstring GetDesktopPath() {
     return path;
 }
 
+static std::wstring formatSize(uint64_t done, uint64_t total) {
+    enum { KB = 1024, MB = 1024 * 1024, GB = 1024 * 1024 * 1024 };
+    if (total >= GB) {
+        return fmt::format(L"{:.2f} / {:.2f} GB", (double)done / GB, (double)total / GB);
+    } else if (total >= MB) {
+        return fmt::format(L"{:.2f} / {:.2f} MB", (double)done / MB, (double)total / MB);
+    } else if (total >= KB) {
+        return fmt::format(L"{:.2f} / {:.2f} KB", (double)done / KB, (double)total / KB);
+    } else {
+        return fmt::format(L"{} / {} B", done, total);
+    }
+}
+
+static std::wstring formatSpeed(double speed) {
+    enum { KB = 1024, MB = 1024 * 1024, GB = 1024 * 1024 * 1024 };
+    if (speed >= GB) {
+        return fmt::format(L"{:.2f} GB/s", speed / GB);
+    } else if (speed >= MB) {
+        return fmt::format(L"{:.2f} MB/s", speed / MB);
+    } else if (speed >= KB) {
+        return fmt::format(L"{:.2f} KB/s", speed / KB);
+    } else {
+        return fmt::format(L"{:.2f} B/s", speed);
+    }
+}
 
 class ListViewLogger : public Logger {
 public:
@@ -87,6 +112,7 @@ struct ContactData {
     std::string host;
     uint16_t port;
     ConnectState connectState = ConnectState::Disconnected;
+    ProgressUpdate prevProgress, progress;
 };
 
 class RootWindow : public Window
@@ -110,7 +136,17 @@ private:
     std::unique_ptr<DiscoveryThread> discoveryThread_;
 
     void SelectAndSendFile(const ContactData& contactData);
+    int GetContactIndex(const Contact& c);
 };
+
+int RootWindow::GetContactIndex(const Contact& c) {
+    for (int i = 0; i < (int)contactData_.size(); i++) {
+        if (contactData_[i].c == c) {
+            return i;
+        }
+    }
+    return -1;
+}
 
 LRESULT RootWindow::OnCreate()
 {
@@ -180,6 +216,21 @@ LRESULT RootWindow::OnCreate()
     lvc.pszText = TEXT("State");
     ListView_InsertColumn(contactView_, 1, &lvc);
 
+    lvc.mask = LVCF_TEXT | LVCF_WIDTH;
+    lvc.cx = 100;
+    lvc.pszText = TEXT("Sent Files");
+    ListView_InsertColumn(contactView_, 2, &lvc);
+
+    lvc.mask = LVCF_TEXT | LVCF_WIDTH;
+    lvc.cx = 150;
+    lvc.pszText = TEXT("Sent Bytes");
+    ListView_InsertColumn(contactView_, 3, &lvc);
+
+    lvc.mask = LVCF_TEXT | LVCF_WIDTH;
+    lvc.cx = 100;
+    lvc.pszText = TEXT("Speed");
+    ListView_InsertColumn(contactView_, 4, &lvc);
+
     ListView_SetItemCount(contactView_, contactData_.size());
 
     logger_.reset(new ListViewLogger(this, logView_));
@@ -187,13 +238,7 @@ LRESULT RootWindow::OnCreate()
     socketThread_->Init(logger_.get(), GetHWND());
     socketThread_->setOnConnectCb([this](const Contact& c, bool connected) {
         RunInThread([this, c, connected] {
-            int index = -1;
-            for (int i = 0; i < (int)contactData_.size(); i++) {
-                if (contactData_[i].c == c) {
-                    index = i;
-                    break;
-                }
-            }
+            int index = GetContactIndex(c);
             if (index == -1) {
                 // Can happen if the remote end which is not a contact connected/disconnected to us
                 return;
@@ -206,6 +251,20 @@ LRESULT RootWindow::OnCreate()
         });
     });
     diskThread_.reset(new DiskThread(logger_.get(), socketThread_.get(), GetDesktopPath()));
+    diskThread_->setProgressUpdateCb([this](const Contact& c, const ProgressUpdate& up) {
+        RunInThread([this, c, up] {
+            int index = GetContactIndex(c);
+            if (index == -1) {
+                return;
+            }
+            auto now = std::chrono::steady_clock::now();
+            ContactData& data = contactData_[index];
+            data.prevProgress = data.progress;
+            data.progress = up;
+            ListView_RedrawItems(contactView_, index, index);
+            UpdateWindow(contactView_);
+        });
+    });
     diskThread_->Start();
 
     discoveryThread_.reset(new DiscoveryThread(*logger_));
@@ -284,6 +343,31 @@ void RootWindow::OnGetDispInfo(NMLVDISPINFO* pnmv) {
                 data.connectState == ContactData::ConnectState::Connected ? L"Connected" :
                 data.connectState == ContactData::ConnectState::Disconnected ? L"Disconnected" :
                 data.connectState == ContactData::ConnectState::Connecting ? L"Connecting" : L"";
+            break;
+        case 2: {
+            std::wstring res = fmt::format(L"{} / {}", data.progress.doneFiles, data.progress.totalFiles);
+            lstrcpyn(pnmv->item.pszText, res.c_str(), pnmv->item.cchTextMax);
+            break;
+        }
+        case 3: {
+            std::wstring res = formatSize(data.progress.doneBytes, data.progress.totalBytes);
+            lstrcpyn(pnmv->item.pszText, res.c_str(), pnmv->item.cchTextMax);
+            break;
+        }
+        case 4: {
+            if (data.prevProgress.timestamp == std::chrono::steady_clock::time_point()) {
+                // First progress, ignore
+                pnmv->item.pszText[0] = L'\0';
+            } else {
+                using float_seconds = std::chrono::duration<double>;
+                uint64_t diffBytes = data.progress.doneBytes - data.prevProgress.doneBytes;
+                std::chrono::steady_clock::duration diffTime = data.progress.timestamp - data.prevProgress.timestamp;
+                double speed = diffBytes / float_seconds(diffTime).count();
+                std::wstring res = formatSpeed(speed);
+                lstrcpyn(pnmv->item.pszText, res.c_str(), pnmv->item.cchTextMax);
+            }
+            break;
+        }
         }
     }
     

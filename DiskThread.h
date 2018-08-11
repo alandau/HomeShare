@@ -8,10 +8,19 @@
 #include <deque>
 #include <memory>
 
+struct ProgressUpdate {
+    std::chrono::steady_clock::time_point timestamp;
+    uint64_t doneBytes = 0;
+    uint64_t totalBytes = 0;
+    uint32_t doneFiles = 0;
+    uint32_t totalFiles = 0;
+};
+
 class DiskThread : public MessageThread {
 public:
     DiskThread(Logger* logger, SocketThreadApi* socketThread, const std::wstring& receivePath);
     void Enqueue(const Contact& c, const std::wstring& filename);
+    void setProgressUpdateCb(std::function<void(const Contact& c, const ProgressUpdate& up)> cb);
 
 private:
     enum { MAX_BUFFERS_TO_SEND = 10 };
@@ -44,6 +53,8 @@ private:
 
     HANDLE GetReceiveFile(const std::wstring& origFilename, std::wstring& filename);
 
+    void MaybeSendProgressUpdate(const Contact& c, bool force = false);
+
     Logger& log;
     SocketThreadApi* socketThread_;
     std::wstring receivePath_;
@@ -53,4 +64,7 @@ private:
     Map paused_;
 
     std::unordered_map<Contact, ReceiveData> receive_;
+
+    std::unordered_map<Contact, ProgressUpdate> progressMap_;
+    std::function<void(const Contact& c, const ProgressUpdate& up)> progressUpdateCb_;
 };

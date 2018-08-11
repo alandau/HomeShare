@@ -46,6 +46,10 @@ void DiskThread::Enqueue(const Contact& c, const std::wstring& filename) {
     });
 }
 
+void DiskThread::setProgressUpdateCb(std::function<void(const Contact& c, const ProgressUpdate& up)> cb) {
+    progressUpdateCb_ = std::move(cb);
+}
+
 void DiskThread::DoWriteLoop() {
     if (!uncorked_.empty()) {
         RunInThread([this] {
@@ -84,6 +88,12 @@ void DiskThread::DoWriteLoopImpl(Map::iterator iter) {
         item.state = QueueItem::State::SEND_DATA;
         LARGE_INTEGER size;
         GetFileSizeEx(hFile, &size);
+
+        progressMap_[c].totalBytes += size.QuadPart;
+        progressMap_[c].totalFiles++;
+        MaybeSendProgressUpdate(c, true);
+
+
         SendFileHeader header;
         header.name = Utf16ToUtf8(item.filename);
         size_t backslash = header.name.rfind('\\');
@@ -120,6 +130,8 @@ void DiskThread::DoWriteLoopImpl(Map::iterator iter) {
                 return;
             }
             buffer->adjustWritePos(count);
+            progressMap_[c].doneBytes += count;
+            MaybeSendProgressUpdate(c);
             bool shouldCork = SendBufferToContact(c, SENDFILE_DATA, std::move(buffer));
             numBuffers++;
             if (shouldCork || numBuffers >= MAX_BUFFERS_TO_SEND) {
@@ -133,6 +145,8 @@ void DiskThread::DoWriteLoopImpl(Map::iterator iter) {
         trailer.checksum = 12345;
         Buffer::UniquePtr buffer = Serializer().serialize(trailer);
         // Ignore possible corking, since this is the last buffer
+        progressMap_[c].doneFiles++;
+        MaybeSendProgressUpdate(c, true);
         SendBufferToContact(c, SENDFILE_TRAILER, std::move(buffer));
         queue.pop_front();
     }
@@ -248,4 +262,22 @@ HANDLE DiskThread::GetReceiveFile(const std::wstring& origFilename, std::wstring
         return hPartFile;
     }
     return INVALID_HANDLE_VALUE;
+}
+
+void DiskThread::MaybeSendProgressUpdate(const Contact& c, bool force) {
+    if (!progressUpdateCb_) {
+        return;
+    }
+    auto it = progressMap_.find(c);
+    if (it == progressMap_.end()) {
+        return;
+    }
+    ProgressUpdate& data = it->second;
+    auto now = std::chrono::steady_clock::now();
+    if (!force && now - data.timestamp < std::chrono::milliseconds(500)) {
+        return;
+    }
+    data.timestamp = now;
+
+    progressUpdateCb_(c, data);
 }
