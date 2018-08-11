@@ -3,6 +3,7 @@
 #include "lib/win/MessageThread.h"
 #include "lib/win/window.h"
 #include "lib/win/raii.h"
+#include "lib/win/encoding.h"
 #include <string>
 #include <vector>
 #include <thread>
@@ -116,7 +117,7 @@ void SocketThread::setOnConnectCb(std::function<void(const Contact& c, bool conn
 void SocketThread::InitInThread() {
     WSADATA wsd;
     if (WSAStartup(MAKEWORD(2, 2), &wsd) != 0) {
-        log.e(L"WSAStartup error {}", WSAGetLastError());
+        log.e(L"WSAStartup error {}", errstr(WSAGetLastError()));
         return;
     }
     serverSocket_ = socket(AF_INET, SOCK_STREAM, 0);
@@ -160,7 +161,7 @@ void SocketThread::Connect(const Contact& c, const std::string& hostname, uint16
     int res = connect(s, (sockaddr*)&addr, sizeof(addr));
     if (res < 0 && (res = WSAGetLastError()) != WSAEWOULDBLOCK) {
         CloseSocket(s);
-        log.e(L"Can't connect, WSAGetLastError={}", res);
+        log.e(L"Can't connect, WSAGetLastError={}", errstr(res));
     }
 }
 
@@ -211,7 +212,7 @@ void SocketThread::OnRead(SOCKET s) {
                 if ((err = WSAGetLastError()) == WSAEWOULDBLOCK) {
                     return;
                 }
-                log.e(L"Error reading from socket, WSAGetLastError={}", err);
+                log.e(L"Error reading from socket, WSAGetLastError={}", errstr(err));
                 CloseSocket(s);
                 return;
             } else if (count == 0) {
@@ -245,7 +246,7 @@ void SocketThread::OnRead(SOCKET s) {
             if ((err = WSAGetLastError()) == WSAEWOULDBLOCK) {
                 return;
             }
-            log.e(L"Error reading from socket, WSAGetLastError={}", err);
+            log.e(L"Error reading from socket, WSAGetLastError={}", errstr(err));
             CloseSocket(s);
         } else if (count == 0) {
             // Unexpected EOF
@@ -297,7 +298,7 @@ void SocketThread::OnWrite(SOCKET s) {
                 data.isCorked = true;
                 return;
             }
-            log.e(L"Error writing to socket, WSAGetLastError={}", res);
+            log.e(L"Error writing to socket, WSAGetLastError={}", errstr(res));
             CloseSocket(s);
             return;
         }
@@ -312,7 +313,7 @@ void SocketThread::OnWrite(SOCKET s) {
 
 void SocketThread::onSocketEvent(SOCKET sock, int event, int error) {
     if (error) {
-        log.e(L"Socket error {}", error);
+        log.e(L"Socket error {}", errstr(error));
         CloseSocket(sock);
         return;
     }

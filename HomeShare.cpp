@@ -3,6 +3,7 @@
 #include "lib/win/encoding.h"
 #include "SocketThread.h"
 #include "DiskThread.h"
+#include "DiscoveryThread.h"
 #include "Logger.h"
 #include "resource.h"
 #include <windows.h>
@@ -106,6 +107,7 @@ private:
     std::unique_ptr<ListViewLogger> logger_;
     std::unique_ptr<SocketThreadApi> socketThread_;
     std::unique_ptr<DiskThread> diskThread_;
+    std::unique_ptr<DiscoveryThread> discoveryThread_;
 
     void SelectAndSendFile(const ContactData& contactData);
 };
@@ -205,6 +207,25 @@ LRESULT RootWindow::OnCreate()
     });
     diskThread_.reset(new DiskThread(logger_.get(), socketThread_.get(), GetDesktopPath()));
     diskThread_->Start();
+
+    discoveryThread_.reset(new DiscoveryThread(*logger_));
+    discoveryThread_->setOnResult([this](const std::vector<DiscoveryThread::DiscoveryResult>& result) {
+        RunInThread([this, result] {
+            contactData_.clear();
+            for (const DiscoveryThread::DiscoveryResult& r : result) {
+                ContactData c;
+                c.c.pubkey = r.pubkey;
+                c.host = r.host;
+                c.port = r.port;
+                c.displayName = Utf8ToUtf16(fmt::format("{}:{}", c.host, c.port));
+                contactData_.push_back(std::move(c));
+            }
+            ListView_SetItemCount(contactView_, contactData_.size());
+            ListView_RedrawItems(contactView_, 0, contactData_.size() - 1);
+            UpdateWindow(contactView_);
+        });
+    });
+    discoveryThread_->Start();
     return 0;
 }
 
@@ -310,6 +331,7 @@ LRESULT RootWindow::HandleMessage(UINT uMsg, WPARAM wParam, LPARAM lParam)
     case WM_COMMAND:
         switch (GET_WM_COMMAND_ID(wParam, lParam)) {
         case ID_FILE_SENDFILE:
+            discoveryThread_->StartDiscovery();
             break;
         }
         return 0;
