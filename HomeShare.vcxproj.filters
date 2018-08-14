@@ -279,6 +279,9 @@
     <ClInclude Include="proto\auth.h">
       <Filter>proto</Filter>
     </ClInclude>
+    <ClInclude Include="lib\crypto.h">
+      <Filter>lib</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="HomeShare.cpp">

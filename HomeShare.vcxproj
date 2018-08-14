@@ -154,6 +154,7 @@
     <ClInclude Include="DiscoveryThread.h" />
     <ClInclude Include="DiskThread.h" />
     <ClInclude Include="lib\Buffer.h" />
+    <ClInclude Include="lib\crypto.h" />
     <ClInclude Include="lib\fmt\core.h" />
     <ClInclude Include="lib\fmt\format-inl.h" />
     <ClInclude Include="lib\fmt\format.h" />

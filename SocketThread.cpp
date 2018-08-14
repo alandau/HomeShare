@@ -5,7 +5,7 @@
 #include "lib/win/raii.h"
 #include "lib/win/encoding.h"
 #include "proto/auth.h"
-#include "crypto.h"
+#include "lib/crypto.h"
 #include <string>
 #include <vector>
 #include <thread>

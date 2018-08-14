@@ -1,6 +1,6 @@
 #pragma once
 
-#include "lib/sodium.h"
+#include "sodium.h"
 #include <string>
 
 inline std::string getRandom(size_t size) {
