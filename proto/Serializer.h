@@ -117,6 +117,7 @@ private:
                 skip<T>();
             } else if (realId > id) {
                 b->adjustReadPos(-1);
+                return;
             }
         }
     }

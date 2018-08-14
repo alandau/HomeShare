@@ -482,7 +482,7 @@ WinMain(HINSTANCE hinst, HINSTANCE, LPSTR, int nShowCmd)
         MessageBox(NULL, L"Couldn't initialize libsodium", L"HomeShare", MB_OK);
         return 1;
     }
-
+    
     g_hinst = hinst;
 
     int argc;

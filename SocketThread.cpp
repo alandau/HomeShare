@@ -4,6 +4,8 @@
 #include "lib/win/window.h"
 #include "lib/win/raii.h"
 #include "lib/win/encoding.h"
+#include "proto/auth.h"
+#include "crypto.h"
 #include <string>
 #include <vector>
 #include <thread>
@@ -11,9 +13,39 @@
 #include <deque>
 
 enum { MAX_MESSAGE_SIZE = 100000 };
+
+struct AuthData {
+    enum class Mode { Client, Server };
+    enum class ClientState {
+        Uninitialized,
+        ExpectingServerHelloFinished,
+        Complete,
+        Error,
+    };
+    enum class ServerState {
+        Uninitialized,
+        ExpectingClientHello,
+        ExpectingClientFinished,
+        Complete,
+        Error,
+    };
+    Mode mode;
+    ClientState clientState = ClientState::Uninitialized;
+    ServerState serverState = ServerState::Uninitialized;
+    std::string myKeyShare, myKeySharePriv;
+    std::string peerKeyShare;
+    std::string myRandom, peerRandom;
+    std::string rxkey, txkey;
+    std::string rxnonce, txnonce;
+
+    Buffer::UniquePtr encryptTx(Buffer::UniquePtr buffer);
+    Buffer::UniquePtr decryptRx(Buffer::UniquePtr buffer);
+};
+
 struct SocketData {
+    SOCKET sock;
     Contact contact;
-    sockaddr addr;
+    AuthData auth;
 
     // Input
     uint32_t messageLen = 0;
@@ -40,7 +72,8 @@ public:
     void setQueueEmptyCb(std::function<void(const Contact& c)> queueEmptyCb);
     void setOnMessageCb(std::function<void(const Contact& c, Buffer::UniquePtr message)> onMessageCb);
     void setOnConnectCb(std::function<void(const Contact& c, bool connected)> cb);
-    bool SendBuffer(const Contact& c, Buffer* buffer);
+    bool SendBuffer(const Contact& c, Buffer::UniquePtr buffer);
+    bool SendBuffer(SocketData& data, Buffer::UniquePtr buffer);
     void Connect(const Contact& c, const std::string& hostname, uint16_t port);
 
 protected:
@@ -52,7 +85,12 @@ private:
     void OnConnect(SOCKET s);
     void OnRead(SOCKET s);
     void OnWrite(SOCKET s);
-    void handleIncomingMessage(const Contact& c, Buffer::UniquePtr message);
+    void handleIncomingMessage(SocketData& data, Buffer::UniquePtr message);
+
+    void SendClientHelloMessage(SocketData& data);
+    void ServerRecvClientHelloMessage(SocketData& data, Buffer::UniquePtr message);
+    void ClientRecvServerHelloFinishedMessage(SocketData& data, Buffer::UniquePtr message);
+    void ServerRecvClientFinishedMessage(SocketData& data, Buffer::UniquePtr message);
 
     Logger& log;
     HWND notifyHwnd_;
@@ -83,7 +121,7 @@ void SocketThreadApi::setOnMessageCb(std::function<void(const Contact& c, Buffer
 
 bool SocketThreadApi::SendBuffer(const Contact& c, Buffer* buffer) {
     return d->RunInThreadWithResult([this, c, buffer] {
-        return d->SendBuffer(c, buffer);
+        return d->SendBuffer(c, Buffer::UniquePtr(buffer));
     });
 }
 void SocketThreadApi::setOnConnectCb(std::function<void(const Contact& c, bool connected)> cb) {
@@ -155,7 +193,10 @@ void SocketThread::Connect(const Contact& c, const std::string& hostname, uint16
     }
     contactData_[c] = s;
     SocketData& data = socketData_[s];
+    data.sock = s;
     data.contact = c;
+    data.auth.mode = AuthData::Mode::Client;
+    data.auth.clientState = AuthData::ClientState::Uninitialized;
     data.isCorked = true;
 
     int res = connect(s, (sockaddr*)&addr, sizeof(addr));
@@ -165,16 +206,18 @@ void SocketThread::Connect(const Contact& c, const std::string& hostname, uint16
     }
 }
 
-bool SocketThread::SendBuffer(const Contact& c, Buffer* buffer) {
-    assert(contactData_.find(c) != contactData_.end());
+bool SocketThread::SendBuffer(SocketData& data, Buffer::UniquePtr buffer) {
+    SOCKET s = data.sock;
 
+    if ((data.auth.mode == AuthData::Mode::Client && data.auth.clientState == AuthData::ClientState::Complete) ||
+        (data.auth.mode == AuthData::Mode::Server && data.auth.serverState == AuthData::ServerState::Complete)) {
+        buffer = data.auth.encryptTx(std::move(buffer));
+    }
     uint32_t size = buffer->readSize();
     uint8_t* buf = buffer->prependHeader(sizeof(size));
     memcpy(buf, &size, sizeof(size));
 
-    SOCKET s = contactData_[c];
-    SocketData& data = socketData_[s];
-    data.queue.push_back(buffer);
+    data.queue.push_back(buffer.release());
     if (!data.isCorked && !data.onWriteScheduled) {
         data.onWriteScheduled = true;
         RunInThread([this, s] {
@@ -185,6 +228,14 @@ bool SocketThread::SendBuffer(const Contact& c, Buffer* buffer) {
         data.isQueueFull = true;
     }
     return data.isQueueFull;
+}
+
+bool SocketThread::SendBuffer(const Contact& c, Buffer::UniquePtr buffer) {
+    assert(contactData_.find(c) != contactData_.end());
+
+    SOCKET s = contactData_[c];
+    SocketData& data = socketData_[s];
+    return SendBuffer(data, std::move(buffer));
 }
 
 void SocketThread::CloseSocket(SOCKET s) {
@@ -258,7 +309,7 @@ void SocketThread::OnRead(SOCKET s) {
 
     // Prepare for next message
     data.messageLenLen = 0;
-    handleIncomingMessage(Contact{ "blah" }, std::move(data.message));
+    handleIncomingMessage(data, std::move(data.message));
 }
 
 void SocketThread::OnWrite(SOCKET s) {
@@ -323,7 +374,9 @@ void SocketThread::onSocketEvent(SOCKET sock, int event, int error) {
         int addrlen = sizeof(addr);
         SOCKET clientSock = accept(sock, &addr, &addrlen);
         SocketData& data = socketData_[clientSock];
-        data.addr = addr;
+        data.sock = clientSock;
+        data.auth.mode = AuthData::Mode::Server;
+        data.auth.serverState = AuthData::ServerState::ExpectingClientHello;
         WSAAsyncSelect(clientSock, GetHWND(), WM_SOCKET, FD_READ | FD_WRITE | FD_CLOSE);
         break;
     }
@@ -350,6 +403,187 @@ void SocketThread::OnConnect(SOCKET s) {
     SocketData& data = socketData_[s];
     data.isCorked = false;
 
+    assert(data.auth.mode == AuthData::Mode::Client);
+    assert(data.auth.clientState == AuthData::ClientState::Uninitialized);
+    SendClientHelloMessage(data);
+}
+
+void SocketThread::handleIncomingMessage(SocketData& data, Buffer::UniquePtr message) {
+    if ((data.auth.mode == AuthData::Mode::Client && data.auth.clientState == AuthData::ClientState::Complete) ||
+        (data.auth.mode == AuthData::Mode::Server && data.auth.serverState == AuthData::ServerState::Complete)) {
+        message = data.auth.decryptRx(std::move(message));
+        if (!message) {
+            log.e(L"Can't decrypt message");
+            CloseSocket(data.sock);
+            return;
+        }
+        onMessageCb_(Contact{ "blah" }, std::move(message));
+        return;
+    }
+
+    if (data.auth.mode == AuthData::Mode::Client) {
+        if (data.auth.clientState == AuthData::ClientState::ExpectingServerHelloFinished) {
+            ClientRecvServerHelloFinishedMessage(data, std::move(message));
+        } else if (data.auth.clientState == AuthData::ClientState::Error) {
+            log.e(L"Client: Received message in error state");
+            CloseSocket(data.sock);
+        } else if (data.auth.clientState == AuthData::ClientState::Uninitialized) {
+            log.e(L"Client: Received message in uninitialized state");
+            CloseSocket(data.sock);
+        } else {
+            log.e(L"Client: Bad state");
+            CloseSocket(data.sock);
+        }
+    } else {
+        if (data.auth.serverState == AuthData::ServerState::ExpectingClientHello) {
+            ServerRecvClientHelloMessage(data, std::move(message));
+        } else if (data.auth.serverState == AuthData::ServerState::ExpectingClientFinished) {
+            ServerRecvClientFinishedMessage(data, std::move(message));
+        } else if (data.auth.serverState == AuthData::ServerState::Error) {
+            log.e(L"Server: Received message in error state");
+            CloseSocket(data.sock);
+        } else if (data.auth.serverState == AuthData::ServerState::Uninitialized) {
+            log.e(L"Server: Received message in uninitialized state");
+            CloseSocket(data.sock);
+        } else {
+            log.e(L"Server: Bad state");
+            CloseSocket(data.sock);
+        }
+    }
+}
+
+void SocketThread::SendClientHelloMessage(SocketData& data) {
+    AuthData& auth = data.auth;
+
+    auth.myRandom = getRandom(32);
+    auth.txnonce = getRandom(crypto_aead_chacha20poly1305_ietf_NPUBBYTES);
+    auth.myKeyShare.resize(crypto_kx_PUBLICKEYBYTES);
+    auth.myKeySharePriv.resize(crypto_kx_SECRETKEYBYTES);
+    crypto_kx_keypair((unsigned char*)auth.myKeyShare.data(), (unsigned char*)auth.myKeySharePriv.data());
+
+    auth.clientState = AuthData::ClientState::ExpectingServerHelloFinished;
+
+    ClientHelloMessage msg;
+    msg.random = auth.myRandom;
+    msg.kexKeyShare = auth.myKeyShare;
+    msg.nonce = auth.txnonce;
+    Buffer::UniquePtr buf = Serializer().serialize(msg);
+    SendBuffer(data, std::move(buf));
+}
+
+void SocketThread::ServerRecvClientHelloMessage(SocketData& data, Buffer::UniquePtr message) {
+    AuthData& auth = data.auth;
+    {
+        ClientHelloMessage msg = Serializer().deserialize<ClientHelloMessage>(message.get());
+
+        if (msg.random.size() != 32 ||
+            msg.kexKeyShare.size() != crypto_kx_PUBLICKEYBYTES ||
+            msg.nonce.size() != crypto_aead_chacha20poly1305_ietf_NPUBBYTES) {
+            CloseSocket(data.sock);
+            return;
+        }
+        auth.peerRandom = msg.random;
+        auth.peerKeyShare = msg.kexKeyShare;
+        auth.rxnonce = msg.nonce;
+    }
+
+    auth.myRandom = getRandom(32);
+    auth.myKeyShare.resize(crypto_kx_PUBLICKEYBYTES);
+    auth.myKeySharePriv.resize(crypto_kx_SECRETKEYBYTES);
+    crypto_kx_keypair((unsigned char*)auth.myKeyShare.data(), (unsigned char*)auth.myKeySharePriv.data());
+
+    auth.rxkey.resize(crypto_kx_SESSIONKEYBYTES);
+    auth.txkey.resize(crypto_kx_SESSIONKEYBYTES);
+
+    if (crypto_kx_server_session_keys((unsigned char*)auth.rxkey.data(), (unsigned char*)auth.txkey.data(),
+        (unsigned char*)auth.myKeyShare.data(), (unsigned char*)auth.myKeySharePriv.data(),
+        (unsigned char*)auth.peerKeyShare.data()) != 0) {
+        // Suspicious client key
+        CloseSocket(data.sock);
+        return;
+    }
+
+    auth.serverState = AuthData::ServerState::ExpectingClientFinished;
+
+    std::string txnonce = getRandom(crypto_aead_chacha20poly1305_ietf_NPUBBYTES);
+    auth.txnonce = txnonce;
+    SignatureMessage sigmsg;
+    sigmsg.pubkey = "server's pubkey";
+    sigmsg.signature = "signature";
+    Buffer::UniquePtr serializedSigMsg = Serializer().serialize(sigmsg);
+    Buffer::UniquePtr encrypted = auth.encryptTx(std::move(serializedSigMsg));
+
+    ServerHelloFinishedMessage reply;
+    reply.random = auth.myRandom;
+    reply.kexKeyShare = auth.myKeyShare;
+    reply.nonce = txnonce;  // auth.txnonce has been incremented by encryptTx so don't use it here
+    reply.encryptedSignatureMessage = std::string((const char*)encrypted->readData(), encrypted->readSize());
+    encrypted.reset();
+
+    Buffer::UniquePtr buf = Serializer().serialize(reply);
+    SendBuffer(data, std::move(buf));
+}
+
+void SocketThread::ClientRecvServerHelloFinishedMessage(SocketData& data, Buffer::UniquePtr message) {
+    AuthData& auth = data.auth;
+    ServerHelloFinishedMessage msg = Serializer().deserialize<ServerHelloFinishedMessage>(message.get());
+
+    if (msg.random.size() != 32 ||
+        msg.kexKeyShare.size() != crypto_kx_PUBLICKEYBYTES ||
+        msg.nonce.size() != crypto_aead_chacha20poly1305_ietf_NPUBBYTES ||
+        msg.encryptedSignatureMessage.size() > 2000) {
+        CloseSocket(data.sock);
+        log.d(L"Client: Bad ServerHelloFinished");
+        return;
+    }
+    auth.peerRandom = msg.random;
+    auth.peerKeyShare = msg.kexKeyShare;
+    auth.rxnonce = msg.nonce;
+
+    auth.rxkey.resize(crypto_kx_SESSIONKEYBYTES);
+    auth.txkey.resize(crypto_kx_SESSIONKEYBYTES);
+
+    if (crypto_kx_client_session_keys((unsigned char*)auth.rxkey.data(), (unsigned char*)auth.txkey.data(),
+        (unsigned char*)auth.myKeyShare.data(), (unsigned char*)auth.myKeySharePriv.data(),
+        (unsigned char*)auth.peerKeyShare.data()) != 0) {
+        // Suspicious server key
+        CloseSocket(data.sock);
+        return;
+    }
+
+    {
+        Buffer::UniquePtr encrypted(Buffer::create(msg.encryptedSignatureMessage.size()));
+        memcpy(encrypted->writeData(), msg.encryptedSignatureMessage.data(), msg.encryptedSignatureMessage.size());
+        encrypted->adjustWritePos(msg.encryptedSignatureMessage.size());
+
+        Buffer::UniquePtr decrypted = auth.decryptRx(std::move(encrypted));
+        if (!decrypted) {
+            log.d(L"Client: Error decrypting ServerHelloFinished");
+            CloseSocket(data.sock);
+            return;
+        }
+
+        SignatureMessage serversigmsg = Serializer().deserialize<SignatureMessage>(decrypted.get());
+        log.d(L"Client: Got SignatureMessage from pubkey {}", Utf8ToUtf16(serversigmsg.pubkey));
+    }
+
+    {
+        SignatureMessage clientsigmsg;
+        clientsigmsg.pubkey = "client's pubkey";
+        clientsigmsg.signature = "signature";
+        Buffer::UniquePtr serializedSigMsg = Serializer().serialize(clientsigmsg);
+        Buffer::UniquePtr encrypted = auth.encryptTx(std::move(serializedSigMsg));
+
+        ClientFinishedMessage reply;
+        reply.encryptedSignatureMessage = std::string((const char*)encrypted->readData(), encrypted->readSize());
+        encrypted.reset();
+
+        Buffer::UniquePtr buf = Serializer().serialize(reply);
+        SendBuffer(data, std::move(buf));
+    }
+
+    auth.clientState = AuthData::ClientState::Complete;
+
     if (onConnectCb_) {
         onConnectCb_(data.contact, true);
     }
@@ -359,6 +593,57 @@ void SocketThread::OnConnect(SOCKET s) {
     }
 }
 
-void SocketThread::handleIncomingMessage(const Contact& c, Buffer::UniquePtr message) {
-    onMessageCb_(c, std::move(message));
+void SocketThread::ServerRecvClientFinishedMessage(SocketData& data, Buffer::UniquePtr message) {
+    AuthData& auth = data.auth;
+    ClientFinishedMessage msg = Serializer().deserialize<ClientFinishedMessage>(message.get());
+
+    if (msg.encryptedSignatureMessage.size() > 2000) {
+        CloseSocket(data.sock);
+        log.d(L"Server:Bad ClientFinished");
+        return;
+    }
+
+    Buffer::UniquePtr encrypted(Buffer::create(msg.encryptedSignatureMessage.size()));
+    memcpy(encrypted->writeData(), msg.encryptedSignatureMessage.data(), msg.encryptedSignatureMessage.size());
+    encrypted->adjustWritePos(msg.encryptedSignatureMessage.size());
+
+    Buffer::UniquePtr decrypted = auth.decryptRx(std::move(encrypted));
+    if (!decrypted) {
+        log.d(L"Server: Error decrypting ClientFinished");
+        CloseSocket(data.sock);
+        return;
+    }
+
+    SignatureMessage sigmsg = Serializer().deserialize<SignatureMessage>(decrypted.get());
+    log.d(L"Server: Got SignatureMessage from pubkey {}", Utf8ToUtf16(sigmsg.pubkey));
+
+    auth.serverState = AuthData::ServerState::Complete;
+}
+
+Buffer::UniquePtr AuthData::encryptTx(Buffer::UniquePtr buffer) {
+    Buffer::UniquePtr encrypted(Buffer::create(buffer->readSize() + crypto_aead_chacha20poly1305_IETF_ABYTES));
+    unsigned long long clen;
+    crypto_aead_chacha20poly1305_ietf_encrypt(encrypted->writeData(), &clen, buffer->readData(), buffer->readSize(),
+        NULL, 0, NULL,
+        (const unsigned char*)txnonce.data(), (const unsigned char*)txkey.data());
+    encrypted->adjustWritePos((intptr_t)clen);
+    sodium_increment((unsigned char*)txnonce.data(), txnonce.size());
+    return encrypted;
+}
+
+Buffer::UniquePtr AuthData::decryptRx(Buffer::UniquePtr buffer) {
+    if (buffer->readSize() < crypto_aead_chacha20poly1305_IETF_ABYTES) {
+        return Buffer::UniquePtr();
+    }
+    Buffer::UniquePtr decrypted(Buffer::create(buffer->readSize() - crypto_aead_chacha20poly1305_IETF_ABYTES));
+    unsigned long long mlen;
+    bool forged = crypto_aead_chacha20poly1305_ietf_decrypt(decrypted->writeData(), &mlen, NULL,
+        buffer->readData(), buffer->readSize(), NULL, 0,
+        (const unsigned char*)rxnonce.data(), (const unsigned char*)rxkey.data()) != 0;
+    decrypted->adjustWritePos((intptr_t)mlen);
+    sodium_increment((unsigned char*)rxnonce.data(), rxnonce.size());
+    if (forged) {
+        decrypted.reset();
+    }
+    return decrypted;
 }

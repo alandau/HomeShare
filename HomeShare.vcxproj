@@ -228,6 +228,7 @@
     <ClInclude Include="lib\win\raii.h" />
     <ClInclude Include="lib\win\window.h" />
     <ClInclude Include="Logger.h" />
+    <ClInclude Include="proto\auth.h" />
     <ClInclude Include="proto\discovery.h" />
     <ClInclude Include="proto\file.h" />
     <ClInclude Include="proto\Serializer.h" />

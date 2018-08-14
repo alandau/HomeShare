@@ -276,6 +276,9 @@
     <ClInclude Include="lib\sodium\version.h">
       <Filter>lib\sodium</Filter>
     </ClInclude>
+    <ClInclude Include="proto\auth.h">
+      <Filter>proto</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="HomeShare.cpp">
