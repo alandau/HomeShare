@@ -75,12 +75,15 @@
       <WarningLevel>Level3</WarningLevel>
       <Optimization>Disabled</Optimization>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>WINVER=0x0501;_WIN32_WINNT=0x0501;STRICT;UNICODE;_UNICODE;WIN32_LEAN_AND_MEAN;FMT_HEADER_ONLY;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WINVER=0x0501;_WIN32_WINNT=0x0501;STRICT;UNICODE;_UNICODE;WIN32_LEAN_AND_MEAN;FMT_HEADER_ONLY;SODIUM_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <LanguageStandard>stdcpp17</LanguageStandard>
+      <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>kernel32.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;comctl32.lib;ws2_32.lib;iphlpapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>kernel32.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;comctl32.lib;ws2_32.lib;iphlpapi.lib;lib$(PlatformTarget)\libsodium-$(Configuration).lib;%(AdditionalDependencies)</AdditionalDependencies>
       <SubSystem>Windows</SubSystem>
+      <AdditionalOptions>/ignore:4099 %(AdditionalOptions)</AdditionalOptions>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
@@ -88,12 +91,15 @@
       <WarningLevel>Level3</WarningLevel>
       <Optimization>Disabled</Optimization>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>WINVER=0x0501;_WIN32_WINNT=0x0501;STRICT;UNICODE;_UNICODE;WIN32_LEAN_AND_MEAN;FMT_HEADER_ONLY;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WINVER=0x0501;_WIN32_WINNT=0x0501;STRICT;UNICODE;_UNICODE;WIN32_LEAN_AND_MEAN;FMT_HEADER_ONLY;SODIUM_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <LanguageStandard>stdcpp17</LanguageStandard>
+      <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>kernel32.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;comctl32.lib;ws2_32.lib;iphlpapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>kernel32.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;comctl32.lib;ws2_32.lib;iphlpapi.lib;lib$(PlatformTarget)\libsodium-$(Configuration).lib;%(AdditionalDependencies)</AdditionalDependencies>
       <SubSystem>Windows</SubSystem>
+      <AdditionalOptions>/ignore:4099 %(AdditionalOptions)</AdditionalOptions>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
@@ -103,15 +109,17 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>WINVER=0x0501;_WIN32_WINNT=0x0501;STRICT;UNICODE;_UNICODE;WIN32_LEAN_AND_MEAN;FMT_HEADER_ONLY;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WINVER=0x0501;_WIN32_WINNT=0x0501;STRICT;UNICODE;_UNICODE;WIN32_LEAN_AND_MEAN;FMT_HEADER_ONLY;SODIUM_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <LanguageStandard>stdcpp17</LanguageStandard>
+      <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
-      <AdditionalDependencies>kernel32.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;comctl32.lib;ws2_32.lib;iphlpapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>kernel32.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;comctl32.lib;ws2_32.lib;iphlpapi.lib;lib$(PlatformTarget)\libsodium-$(Configuration).lib;%(AdditionalDependencies)</AdditionalDependencies>
       <SubSystem>Windows</SubSystem>
+      <AdditionalOptions>/ignore:4099 %(AdditionalOptions)</AdditionalOptions>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -121,15 +129,17 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>WINVER=0x0501;_WIN32_WINNT=0x0501;STRICT;UNICODE;_UNICODE;WIN32_LEAN_AND_MEAN;FMT_HEADER_ONLY;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WINVER=0x0501;_WIN32_WINNT=0x0501;STRICT;UNICODE;_UNICODE;WIN32_LEAN_AND_MEAN;FMT_HEADER_ONLY;SODIUM_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <LanguageStandard>stdcpp17</LanguageStandard>
+      <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
-      <AdditionalDependencies>kernel32.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;comctl32.lib;ws2_32.lib;iphlpapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>kernel32.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;comctl32.lib;ws2_32.lib;iphlpapi.lib;lib$(PlatformTarget)\libsodium-$(Configuration).lib;%(AdditionalDependencies)</AdditionalDependencies>
       <SubSystem>Windows</SubSystem>
+      <AdditionalOptions>/ignore:4099 %(AdditionalOptions)</AdditionalOptions>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -152,6 +162,67 @@
     <ClInclude Include="lib\fmt\printf.h" />
     <ClInclude Include="lib\fmt\ranges.h" />
     <ClInclude Include="lib\fmt\time.h" />
+    <ClInclude Include="lib\sodium.h" />
+    <ClInclude Include="lib\sodium\core.h" />
+    <ClInclude Include="lib\sodium\crypto_aead_aes256gcm.h" />
+    <ClInclude Include="lib\sodium\crypto_aead_chacha20poly1305.h" />
+    <ClInclude Include="lib\sodium\crypto_aead_xchacha20poly1305.h" />
+    <ClInclude Include="lib\sodium\crypto_auth.h" />
+    <ClInclude Include="lib\sodium\crypto_auth_hmacsha256.h" />
+    <ClInclude Include="lib\sodium\crypto_auth_hmacsha512.h" />
+    <ClInclude Include="lib\sodium\crypto_auth_hmacsha512256.h" />
+    <ClInclude Include="lib\sodium\crypto_box.h" />
+    <ClInclude Include="lib\sodium\crypto_box_curve25519xchacha20poly1305.h" />
+    <ClInclude Include="lib\sodium\crypto_box_curve25519xsalsa20poly1305.h" />
+    <ClInclude Include="lib\sodium\crypto_core_ed25519.h" />
+    <ClInclude Include="lib\sodium\crypto_core_hchacha20.h" />
+    <ClInclude Include="lib\sodium\crypto_core_hsalsa20.h" />
+    <ClInclude Include="lib\sodium\crypto_core_salsa20.h" />
+    <ClInclude Include="lib\sodium\crypto_core_salsa2012.h" />
+    <ClInclude Include="lib\sodium\crypto_core_salsa208.h" />
+    <ClInclude Include="lib\sodium\crypto_generichash.h" />
+    <ClInclude Include="lib\sodium\crypto_generichash_blake2b.h" />
+    <ClInclude Include="lib\sodium\crypto_hash.h" />
+    <ClInclude Include="lib\sodium\crypto_hash_sha256.h" />
+    <ClInclude Include="lib\sodium\crypto_hash_sha512.h" />
+    <ClInclude Include="lib\sodium\crypto_kdf.h" />
+    <ClInclude Include="lib\sodium\crypto_kdf_blake2b.h" />
+    <ClInclude Include="lib\sodium\crypto_kx.h" />
+    <ClInclude Include="lib\sodium\crypto_onetimeauth.h" />
+    <ClInclude Include="lib\sodium\crypto_onetimeauth_poly1305.h" />
+    <ClInclude Include="lib\sodium\crypto_pwhash.h" />
+    <ClInclude Include="lib\sodium\crypto_pwhash_argon2i.h" />
+    <ClInclude Include="lib\sodium\crypto_pwhash_argon2id.h" />
+    <ClInclude Include="lib\sodium\crypto_pwhash_scryptsalsa208sha256.h" />
+    <ClInclude Include="lib\sodium\crypto_scalarmult.h" />
+    <ClInclude Include="lib\sodium\crypto_scalarmult_curve25519.h" />
+    <ClInclude Include="lib\sodium\crypto_scalarmult_ed25519.h" />
+    <ClInclude Include="lib\sodium\crypto_secretbox.h" />
+    <ClInclude Include="lib\sodium\crypto_secretbox_xchacha20poly1305.h" />
+    <ClInclude Include="lib\sodium\crypto_secretbox_xsalsa20poly1305.h" />
+    <ClInclude Include="lib\sodium\crypto_secretstream_xchacha20poly1305.h" />
+    <ClInclude Include="lib\sodium\crypto_shorthash.h" />
+    <ClInclude Include="lib\sodium\crypto_shorthash_siphash24.h" />
+    <ClInclude Include="lib\sodium\crypto_sign.h" />
+    <ClInclude Include="lib\sodium\crypto_sign_ed25519.h" />
+    <ClInclude Include="lib\sodium\crypto_sign_edwards25519sha512batch.h" />
+    <ClInclude Include="lib\sodium\crypto_stream.h" />
+    <ClInclude Include="lib\sodium\crypto_stream_chacha20.h" />
+    <ClInclude Include="lib\sodium\crypto_stream_salsa20.h" />
+    <ClInclude Include="lib\sodium\crypto_stream_salsa2012.h" />
+    <ClInclude Include="lib\sodium\crypto_stream_salsa208.h" />
+    <ClInclude Include="lib\sodium\crypto_stream_xchacha20.h" />
+    <ClInclude Include="lib\sodium\crypto_stream_xsalsa20.h" />
+    <ClInclude Include="lib\sodium\crypto_verify_16.h" />
+    <ClInclude Include="lib\sodium\crypto_verify_32.h" />
+    <ClInclude Include="lib\sodium\crypto_verify_64.h" />
+    <ClInclude Include="lib\sodium\export.h" />
+    <ClInclude Include="lib\sodium\randombytes.h" />
+    <ClInclude Include="lib\sodium\randombytes_salsa20_random.h" />
+    <ClInclude Include="lib\sodium\randombytes_sysrandom.h" />
+    <ClInclude Include="lib\sodium\runtime.h" />
+    <ClInclude Include="lib\sodium\utils.h" />
+    <ClInclude Include="lib\sodium\version.h" />
     <ClInclude Include="lib\win\encoding.h" />
     <ClInclude Include="lib\win\MessageThread.h" />
     <ClInclude Include="lib\win\raii.h" />

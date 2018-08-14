@@ -5,6 +5,7 @@
 #include "DiskThread.h"
 #include "DiscoveryThread.h"
 #include "Logger.h"
+#include "lib/sodium.h"
 #include "resource.h"
 #include <windows.h>
 #include <windowsx.h>
@@ -476,6 +477,11 @@ int WINAPI
 WinMain(HINSTANCE hinst, HINSTANCE, LPSTR, int nShowCmd)
 {
     SetDpiAware();
+
+    if (sodium_init() < 0) {
+        MessageBox(NULL, L"Couldn't initialize libsodium", L"HomeShare", MB_OK);
+        return 1;
+    }
 
     g_hinst = hinst;
 
