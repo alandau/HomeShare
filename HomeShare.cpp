@@ -236,7 +236,9 @@ LRESULT RootWindow::OnCreate()
 
     logger_.reset(new ListViewLogger(this, logView_));
     socketThread_.reset(new SocketThreadApi);
-    socketThread_->Init(logger_.get(), GetHWND());
+    std::string pub(crypto_sign_PUBLICKEYBYTES, '\0'), priv(crypto_sign_SECRETKEYBYTES, '\0');
+    crypto_sign_keypair((unsigned char*)pub.data(), (unsigned char*)priv.data());
+    socketThread_->Init(logger_.get(), pub, priv);
     socketThread_->setOnConnectCb([this](const Contact& c, bool connected) {
         RunInThread([this, c, connected] {
             int index = GetContactIndex(c);

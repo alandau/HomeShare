@@ -29,7 +29,7 @@ inline bool operator ==(const Contact& c1, const Contact& c2) {
 
 class SocketThreadApi {
 public:
-    void Init(Logger* logger, HWND notifyHwnd);
+    void Init(Logger* logger, const std::string& myPubkey, const std::string& myPrivKey);
     ~SocketThreadApi();
     void setQueueEmptyCb(std::function<void(const Contact& c)> queueEmptyCb);
     void setOnMessageCb(std::function<void(const Contact& c, Buffer::UniquePtr message)> onMessageCb);

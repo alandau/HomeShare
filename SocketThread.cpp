@@ -37,6 +37,8 @@ struct AuthData {
     std::string myRandom, peerRandom;
     std::string rxkey, txkey;
     std::string rxnonce, txnonce;
+    std::string peerPubkey;
+    GenericHash transcriptHash;
 
     Buffer::UniquePtr encryptTx(Buffer::UniquePtr buffer);
     Buffer::UniquePtr decryptRx(Buffer::UniquePtr buffer);
@@ -68,7 +70,7 @@ public:
     enum { LOW_WATERMARK = 10, HIGH_WATERMARK = 100 };
     enum { MAX_BUFFERS_TO_SEND = 10 };
 
-    SocketThread(Logger& logger, HWND notifyHwnd);
+    SocketThread(Logger& logger, const std::string& myPubkey, const std::string& myPrivKey);
     void setQueueEmptyCb(std::function<void(const Contact& c)> queueEmptyCb);
     void setOnMessageCb(std::function<void(const Contact& c, Buffer::UniquePtr message)> onMessageCb);
     void setOnConnectCb(std::function<void(const Contact& c, bool connected)> cb);
@@ -93,8 +95,8 @@ private:
     void ServerRecvClientFinishedMessage(SocketData& data, Buffer::UniquePtr message);
 
     Logger& log;
-    HWND notifyHwnd_;
     SOCKET serverSocket_;
+    std::string myPubkey_, myPrivkey_;
     std::function<void(const Contact& c)> queueEmptyCb_;
     std::function<void(const Contact& c, Buffer::UniquePtr message)> onMessageCb_;
     std::function<void(const Contact& c, bool connected)> onConnectCb_;
@@ -102,8 +104,8 @@ private:
     std::unordered_map<Contact, SOCKET> contactData_;
 };
 
-void SocketThreadApi::Init(Logger* logger, HWND notifyHwnd) {
-    d = new SocketThread(*logger, notifyHwnd);
+void SocketThreadApi::Init(Logger* logger, const std::string& myPubkey, const std::string& myPrivkey) {
+    d = new SocketThread(*logger, myPubkey, myPrivkey);
     d->Start();
 }
 
@@ -134,9 +136,10 @@ void SocketThreadApi::Connect(const Contact& c, const std::string& hostname, uin
     });
 }
 
-SocketThread::SocketThread(Logger& logger, HWND notifyHwnd)
+SocketThread::SocketThread(Logger& logger, const std::string& myPubkey, const std::string& myPrivkey)
     : log(logger)
-    , notifyHwnd_(notifyHwnd)
+    , myPubkey_(myPubkey)
+    , myPrivkey_(myPrivkey)
 {
 }
 
@@ -455,6 +458,8 @@ void SocketThread::handleIncomingMessage(SocketData& data, Buffer::UniquePtr mes
 void SocketThread::SendClientHelloMessage(SocketData& data) {
     AuthData& auth = data.auth;
 
+    auth.transcriptHash.update(std::string(32, ' '));
+
     auth.myRandom = getRandom(32);
     auth.txnonce = getRandom(crypto_aead_chacha20poly1305_ietf_NPUBBYTES);
     auth.myKeyShare.resize(crypto_kx_PUBLICKEYBYTES);
@@ -469,6 +474,10 @@ void SocketThread::SendClientHelloMessage(SocketData& data) {
     msg.nonce = auth.txnonce;
     Buffer::UniquePtr buf = Serializer().serialize(msg);
     SendBuffer(data, std::move(buf));
+
+    auth.transcriptHash.update(msg.random);
+    auth.transcriptHash.update(msg.kexKeyShare);
+    auth.transcriptHash.update(msg.nonce);
 }
 
 void SocketThread::ServerRecvClientHelloMessage(SocketData& data, Buffer::UniquePtr message) {
@@ -486,6 +495,11 @@ void SocketThread::ServerRecvClientHelloMessage(SocketData& data, Buffer::Unique
         auth.peerKeyShare = msg.kexKeyShare;
         auth.rxnonce = msg.nonce;
     }
+
+    auth.transcriptHash.update(std::string(32, ' '));
+    auth.transcriptHash.update(auth.peerRandom);
+    auth.transcriptHash.update(auth.peerKeyShare);
+    auth.transcriptHash.update(auth.rxnonce);
 
     auth.myRandom = getRandom(32);
     auth.myKeyShare.resize(crypto_kx_PUBLICKEYBYTES);
@@ -507,9 +521,19 @@ void SocketThread::ServerRecvClientHelloMessage(SocketData& data, Buffer::Unique
 
     std::string txnonce = getRandom(crypto_aead_chacha20poly1305_ietf_NPUBBYTES);
     auth.txnonce = txnonce;
+
+    auth.transcriptHash.update(auth.myRandom);
+    auth.transcriptHash.update(auth.myKeyShare);
+    auth.transcriptHash.update(auth.txnonce);
+    auth.transcriptHash.update(myPubkey_);
+
     SignatureMessage sigmsg;
-    sigmsg.pubkey = "server's pubkey";
-    sigmsg.signature = "signature";
+    sigmsg.pubkey = myPubkey_;
+    std::string hash = auth.transcriptHash.resultAndContinue();
+    sigmsg.signature.resize(crypto_sign_BYTES, '\0');
+    crypto_sign_detached((unsigned char*)sigmsg.signature.data(), NULL,
+        (const unsigned char*)hash.data(), hash.size(),
+        (const unsigned char*)myPrivkey_.data());
     Buffer::UniquePtr serializedSigMsg = Serializer().serialize(sigmsg);
     Buffer::UniquePtr encrypted = auth.encryptTx(std::move(serializedSigMsg));
 
@@ -551,6 +575,10 @@ void SocketThread::ClientRecvServerHelloFinishedMessage(SocketData& data, Buffer
         return;
     }
 
+    auth.transcriptHash.update(auth.peerRandom);
+    auth.transcriptHash.update(auth.peerKeyShare);
+    auth.transcriptHash.update(auth.rxnonce);
+
     {
         Buffer::UniquePtr encrypted(Buffer::create(msg.encryptedSignatureMessage.size()));
         memcpy(encrypted->writeData(), msg.encryptedSignatureMessage.data(), msg.encryptedSignatureMessage.size());
@@ -564,13 +592,34 @@ void SocketThread::ClientRecvServerHelloFinishedMessage(SocketData& data, Buffer
         }
 
         SignatureMessage serversigmsg = Serializer().deserialize<SignatureMessage>(decrypted.get());
-        log.d(L"Client: Got SignatureMessage from pubkey {}", Utf8ToUtf16(serversigmsg.pubkey));
+        if (serversigmsg.pubkey.size() != crypto_sign_PUBLICKEYBYTES || serversigmsg.signature.size() != crypto_sign_BYTES) {
+            log.d(L"Client: Wrong server pubkey or signature size");
+            CloseSocket(data.sock);
+            return;
+        }
+        auth.peerPubkey = serversigmsg.pubkey;
+        auth.transcriptHash.update(auth.peerPubkey);
+        std::string hash = auth.transcriptHash.resultAndContinue();
+        if (crypto_sign_verify_detached((const unsigned char*)serversigmsg.signature.data(),
+            (const unsigned char*)hash.data(), hash.size(),
+            (const unsigned char*)auth.peerPubkey.data()) != 0) {
+            log.e(L"Couldn't authenticate server");
+            CloseSocket(data.sock);
+            return;
+        }
+        log.d(L"Client: Authenticated server {}", keyToDisplayStr(auth.peerPubkey));
     }
 
+    auth.transcriptHash.update(myPubkey_);
+
     {
+        std::string hash = auth.transcriptHash.result();
         SignatureMessage clientsigmsg;
-        clientsigmsg.pubkey = "client's pubkey";
-        clientsigmsg.signature = "signature";
+        clientsigmsg.pubkey = myPubkey_;
+        clientsigmsg.signature.resize(crypto_sign_BYTES, '\0');
+        crypto_sign_detached((unsigned char*)clientsigmsg.signature.data(), NULL,
+            (const unsigned char*)hash.data(), hash.size(),
+            (const unsigned char*)myPrivkey_.data());
         Buffer::UniquePtr serializedSigMsg = Serializer().serialize(clientsigmsg);
         Buffer::UniquePtr encrypted = auth.encryptTx(std::move(serializedSigMsg));
 
@@ -615,7 +664,22 @@ void SocketThread::ServerRecvClientFinishedMessage(SocketData& data, Buffer::Uni
     }
 
     SignatureMessage sigmsg = Serializer().deserialize<SignatureMessage>(decrypted.get());
-    log.d(L"Server: Got SignatureMessage from pubkey {}", Utf8ToUtf16(sigmsg.pubkey));
+    if (sigmsg.pubkey.size() != crypto_sign_PUBLICKEYBYTES || sigmsg.signature.size() != crypto_sign_BYTES) {
+        log.d(L"Server: Wrong client pubkey or signature size");
+        CloseSocket(data.sock);
+        return;
+    }
+    auth.peerPubkey = sigmsg.pubkey;
+    auth.transcriptHash.update(auth.peerPubkey);
+    std::string hash = auth.transcriptHash.result();
+    if (crypto_sign_verify_detached((const unsigned char*)sigmsg.signature.data(),
+        (const unsigned char*)hash.data(), hash.size(),
+        (const unsigned char*)auth.peerPubkey.data()) != 0) {
+        log.e(L"Couldn't authenticate client");
+        CloseSocket(data.sock);
+        return;
+    }
+    log.d(L"Server: Authenticated client {}", keyToDisplayStr(auth.peerPubkey));
 
     auth.serverState = AuthData::ServerState::Complete;
 }
