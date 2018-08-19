@@ -34,7 +34,9 @@ public:
     void setQueueEmptyCb(std::function<void(const Contact& c)> queueEmptyCb);
     void setOnMessageCb(std::function<void(const Contact& c, Buffer::UniquePtr message)> onMessageCb);
     void setOnConnectCb(std::function<void(const Contact& c, bool connected)> cb);
+    void setIsKnownContact(std::function<bool(const std::string& pubkey)> cb);
     void Connect(const Contact& c, const std::string& hostname, uint16_t port);
+    void Disconnect(const Contact& c);
     // Return true if should cork (this buffer is still enqueued)
     bool SendBuffer(const Contact& c, Buffer* buffer);
 private:

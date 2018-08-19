@@ -20,6 +20,17 @@ inline std::wstring keyToDisplayStr(const std::string& key) {
     return Utf8ToUtf16(s);
 }
 
+inline std::string displayStrToKey(const std::wstring& disp) {
+    std::string utf8 = Utf16ToUtf8(disp);
+    std::string key(crypto_sign_PUBLICKEYBYTES, '\0');
+    size_t binlen;
+    if (sodium_base642bin((unsigned char*)key.data(), crypto_sign_PUBLICKEYBYTES, utf8.c_str(), utf8.size(),
+        NULL, &binlen, NULL, sodium_base64_VARIANT_ORIGINAL_NO_PADDING) != 0 || binlen != crypto_sign_PUBLICKEYBYTES) {
+        return std::string();
+    }
+    return key;
+}
+
 class GenericHash {
 public:
     GenericHash() {

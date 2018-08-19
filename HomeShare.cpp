@@ -6,6 +6,7 @@
 #include "DiscoveryThread.h"
 #include "Logger.h"
 #include "lib/sodium.h"
+#include "lib/crypto.h"
 #include "resource.h"
 #include <windows.h>
 #include <windowsx.h>
@@ -15,6 +16,7 @@
 #include <shellapi.h>
 
 std::string g_remoteIp;
+std::string g_remotePubkey;
 
 static std::wstring GetDesktopPath() {
     wchar_t path[MAX_PATH];
@@ -189,11 +191,6 @@ LRESULT RootWindow::OnCreate()
     ImageList_AddIcon(icons, LoadIcon(NULL, IDI_INFORMATION));
     ListView_SetImageList(logView_, icons, LVSIL_SMALL);
 
-    contactData_.push_back({ {"pubkey"}, L"Me" , "127.0.0.1", 8890});
-    if (!g_remoteIp.empty()) {
-        contactData_.push_back({ { "pubkey2" }, L"Other" , g_remoteIp, 8890 });
-    }
-
     contactView_ = CreateWindow(WC_LISTVIEW, NULL,
         WS_VISIBLE | WS_CHILD | WS_BORDER | WS_TABSTOP | LVS_NOSORTHEADER | LVS_OWNERDATA | LVS_SINGLESEL | LVS_REPORT,
         0, 0, 0, 0,
@@ -232,12 +229,19 @@ LRESULT RootWindow::OnCreate()
     lvc.pszText = TEXT("Speed");
     ListView_InsertColumn(contactView_, 4, &lvc);
 
-    ListView_SetItemCount(contactView_, contactData_.size());
-
     logger_.reset(new ListViewLogger(this, logView_));
-    socketThread_.reset(new SocketThreadApi);
     std::string pub(crypto_sign_PUBLICKEYBYTES, '\0'), priv(crypto_sign_SECRETKEYBYTES, '\0');
     crypto_sign_keypair((unsigned char*)pub.data(), (unsigned char*)priv.data());
+    logger_->i(L"My public key: {}", keyToDisplayStr(pub));
+
+    contactData_.push_back({ { pub }, L"Me" , "127.0.0.1", 8890 });
+    if (!g_remoteIp.empty()) {
+        contactData_.push_back({ { g_remotePubkey }, L"Other" , g_remoteIp, 8890 });
+    }
+
+    ListView_SetItemCount(contactView_, contactData_.size());
+
+    socketThread_.reset(new SocketThreadApi);
     socketThread_->Init(logger_.get(), pub, priv);
     socketThread_->setOnConnectCb([this](const Contact& c, bool connected) {
         RunInThread([this, c, connected] {
@@ -253,6 +257,29 @@ LRESULT RootWindow::OnCreate()
             UpdateWindow(contactView_);
         });
     });
+    socketThread_->setIsKnownContact([this](const std::string& pubkey) {
+        return !!RunInThreadWithResult([this, pubkey] {
+            Contact c{pubkey};
+            bool found = GetContactIndex(c) != -1;
+            if (!found) {
+                RunInThread([this, pubkey] {
+                    if (MessageBox(GetHWND(),
+                        fmt::format(L"An unknown contact is trying to connect.\n\n"
+                            "Add this contact to contact list?\n\nContact public key: {}", keyToDisplayStr(pubkey)).c_str(),
+                        L"Connection from unknown contact", MB_OKCANCEL | MB_DEFBUTTON2 | MB_ICONQUESTION) != IDOK) {
+                        return;
+                    }
+                    ContactData d;
+                    d.c = Contact{pubkey};
+                    d.displayName = keyToDisplayStr(pubkey);
+                    contactData_.push_back(std::move(d));
+                    ListView_SetItemCount(contactView_, contactData_.size());
+                });
+            }
+            return found;
+        });
+    });
+
     diskThread_.reset(new DiskThread(logger_.get(), socketThread_.get(), GetDesktopPath()));
     diskThread_->setProgressUpdateCb([this](const Contact& c, const ProgressUpdate& up) {
         RunInThread([this, c, up] {
@@ -292,39 +319,67 @@ LRESULT RootWindow::OnCreate()
 }
 
 LRESULT RootWindow::OnNotify(NMHDR *pnm) {
-    if (pnm->hwndFrom != contactView_) {
-        return 0;
-    }
-    switch (pnm->code) {
-    case LVN_GETDISPINFO:
-        OnGetDispInfo(CONTAINING_RECORD(pnm, NMLVDISPINFO, hdr));
-        break;
-    case NM_RCLICK: {
-        NMITEMACTIVATE* nma = CONTAINING_RECORD(pnm, NMITEMACTIVATE, hdr);
-        if (nma->iItem == -1) {
+    if (pnm->hwndFrom == contactView_) {
+        switch (pnm->code) {
+        case LVN_GETDISPINFO:
+            OnGetDispInfo(CONTAINING_RECORD(pnm, NMLVDISPINFO, hdr));
+            break;
+        case NM_RCLICK: {
+            NMITEMACTIVATE* nma = CONTAINING_RECORD(pnm, NMITEMACTIVATE, hdr);
+            if (nma->iItem == -1) {
+                break;
+            }
+            ContactData& data = contactData_[nma->iItem];
+            bool conn = data.connectState == ContactData::ConnectState::Connected;
+            HMENU hMenu = CreatePopupMenu();
+            AppendMenu(hMenu, MF_STRING | (conn ? MF_GRAYED : 0), 1, L"Connect");
+            AppendMenu(hMenu, MF_STRING | (!conn ? MF_GRAYED : 0), 2, L"Disconnect");
+            AppendMenu(hMenu, MF_STRING | (!conn ? MF_GRAYED : 0), 3, L"Send File");
+            POINT p;
+            GetCursorPos(&p);
+            int item = TrackPopupMenu(hMenu, TPM_RETURNCMD, p.x, p.y, 0, GetHWND(), NULL);
+            switch (item) {
+            case 1:
+                data.connectState = ContactData::ConnectState::Connecting;
+                socketThread_->Connect(data.c, data.host, data.port);
+                ListView_RedrawItems(contactView_, nma->iItem, nma->iItem);
+                UpdateWindow(contactView_);
+                break;
+            case 2:
+                socketThread_->Disconnect(data.c);
+                break;
+            case 3:
+                SelectAndSendFile(data);
+                break;
+            }
             break;
         }
-        ContactData& data = contactData_[nma->iItem];
-        bool conn = data.connectState == ContactData::ConnectState::Connected;
-        HMENU hMenu = CreatePopupMenu();
-        AppendMenu(hMenu, MF_STRING | (conn ? MF_GRAYED : 0), 1, L"Connect");
-        AppendMenu(hMenu, MF_STRING | (!conn ? MF_GRAYED : 0), 2, L"Send File");
-        POINT p;
-        GetCursorPos(&p);
-        int item = TrackPopupMenu(hMenu, TPM_RETURNCMD, p.x, p.y, 0, GetHWND(), NULL);
-        switch (item) {
-        case 1:
-            data.connectState = ContactData::ConnectState::Connecting;
-            socketThread_->Connect(data.c, data.host, data.port);
-            ListView_RedrawItems(contactView_, nma->iItem, nma->iItem);
-            UpdateWindow(contactView_);
-            break;
-        case 2:
-            SelectAndSendFile(data);
+        }
+    } else if (pnm->hwndFrom == logView_) {
+        switch (pnm->code) {
+        case NM_DBLCLK: {
+            enum { MAX_LEN = 1000 };
+            NMITEMACTIVATE* nma = CONTAINING_RECORD(pnm, NMITEMACTIVATE, hdr);
+            if (nma->iItem == -1) {
+                break;
+            }
+            if (OpenClipboard(GetHWND()) == NULL) {
+                break;
+            }
+            EmptyClipboard();
+            HGLOBAL hGlob = GlobalAlloc(GMEM_MOVEABLE, MAX_LEN * sizeof(wchar_t));
+            if (hGlob == NULL) {
+                CloseClipboard();
+                break;
+            }
+            wchar_t* buf = (wchar_t *)GlobalLock(hGlob);
+            ListView_GetItemText(logView_, nma->iItem, 2, buf, MAX_LEN);
+            GlobalUnlock(hGlob);
+            SetClipboardData(CF_UNICODETEXT, hGlob);
+            CloseClipboard();
             break;
         }
-        break;
-    }
+        }
     }
     return 0;
 }
@@ -489,8 +544,13 @@ WinMain(HINSTANCE hinst, HINSTANCE, LPSTR, int nShowCmd)
 
     int argc;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLine(), &argc);
-    if (argc > 1) {
+    if (argc > 2) {
         g_remoteIp = Utf16ToUtf8(argv[1]);
+        g_remotePubkey = displayStrToKey(argv[2]);
+        if (g_remotePubkey.empty()) {
+            MessageBox(NULL, L"Bad remote pubkey", L"HomeShare", MB_OK);
+            return 1;
+        }
     }
 
     ComInit comInit;

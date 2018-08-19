@@ -74,9 +74,11 @@ public:
     void setQueueEmptyCb(std::function<void(const Contact& c)> queueEmptyCb);
     void setOnMessageCb(std::function<void(const Contact& c, Buffer::UniquePtr message)> onMessageCb);
     void setOnConnectCb(std::function<void(const Contact& c, bool connected)> cb);
+    void setIsKnownContact(std::function<bool(const std::string& pubkey)> cb);
     bool SendBuffer(const Contact& c, Buffer::UniquePtr buffer);
     bool SendBuffer(SocketData& data, Buffer::UniquePtr buffer);
     void Connect(const Contact& c, const std::string& hostname, uint16_t port);
+    void Disconnect(const Contact& c);
 
 protected:
     std::optional<LRESULT> HandleMessage(UINT uMsg, WPARAM wParam, LPARAM lParam) override;
@@ -100,6 +102,7 @@ private:
     std::function<void(const Contact& c)> queueEmptyCb_;
     std::function<void(const Contact& c, Buffer::UniquePtr message)> onMessageCb_;
     std::function<void(const Contact& c, bool connected)> onConnectCb_;
+    std::function<bool(const std::string& pubkey)> isKnownContact_;
     std::unordered_map<SOCKET, SocketData> socketData_;
     std::unordered_map<Contact, SOCKET> contactData_;
 };
@@ -130,9 +133,19 @@ void SocketThreadApi::setOnConnectCb(std::function<void(const Contact& c, bool c
     d->setOnConnectCb(std::move(cb));
 }
 
+void SocketThreadApi::setIsKnownContact(std::function<bool(const std::string& pubkey)> cb) {
+    d->setIsKnownContact(std::move(cb));
+}
+
 void SocketThreadApi::Connect(const Contact& c, const std::string& hostname, uint16_t port) {
     d->RunInThread([this, c, hostname, port] {
         d->Connect(c, hostname, port);
+    });
+}
+
+void SocketThreadApi::Disconnect(const Contact& c) {
+    d->RunInThread([this, c] {
+        d->Disconnect(c);
     });
 }
 
@@ -155,6 +168,10 @@ void SocketThread::setOnConnectCb(std::function<void(const Contact& c, bool conn
     onConnectCb_ = std::move(cb);
 }
 
+void SocketThread::setIsKnownContact(std::function<bool(const std::string& pubkey)> cb) {
+    isKnownContact_ = std::move(cb);
+}
+
 void SocketThread::InitInThread() {
     WSADATA wsd;
     if (WSAStartup(MAKEWORD(2, 2), &wsd) != 0) {
@@ -166,7 +183,11 @@ void SocketThread::InitInThread() {
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
     addr.sin_port = htons(8890);
-    bind(serverSocket_, (sockaddr*)&addr, sizeof(addr));
+    if (bind(serverSocket_, (sockaddr*)&addr, sizeof(addr)) != 0) {
+        log.e(L"Can bind to port {}, receiving files will not be possible. "
+            "Quit any other program that uses this port and restart this program", 8890);
+        return;
+    }
     WSAAsyncSelect(serverSocket_, GetHWND(), WM_SOCKET, FD_ACCEPT | FD_CLOSE);
     listen(serverSocket_, 10);
 }
@@ -206,6 +227,13 @@ void SocketThread::Connect(const Contact& c, const std::string& hostname, uint16
     if (res < 0 && (res = WSAGetLastError()) != WSAEWOULDBLOCK) {
         CloseSocket(s);
         log.e(L"Can't connect, WSAGetLastError={}", errstr(res));
+    }
+}
+
+void SocketThread::Disconnect(const Contact& c) {
+    auto it = contactData_.find(c);
+    if (it != contactData_.end()) {
+        CloseSocket(it->second);
     }
 }
 
@@ -607,7 +635,13 @@ void SocketThread::ClientRecvServerHelloFinishedMessage(SocketData& data, Buffer
             CloseSocket(data.sock);
             return;
         }
-        log.d(L"Client: Authenticated server {}", keyToDisplayStr(auth.peerPubkey));
+    }
+
+    if (auth.peerPubkey != data.contact.pubkey) {
+        log.e(L"Mismatched peer key, disconnecitng. Excepting: {}, actual: {}",
+            keyToDisplayStr(data.contact.pubkey), keyToDisplayStr(auth.peerPubkey));
+        CloseSocket(data.sock);
+        return;
     }
 
     auth.transcriptHash.update(myPubkey_);
@@ -679,9 +713,20 @@ void SocketThread::ServerRecvClientFinishedMessage(SocketData& data, Buffer::Uni
         CloseSocket(data.sock);
         return;
     }
-    log.d(L"Server: Authenticated client {}", keyToDisplayStr(auth.peerPubkey));
 
+    
+    if (!isKnownContact_(auth.peerPubkey)) {
+        CloseSocket(data.sock);
+        return;
+    }
+
+    data.contact.pubkey = auth.peerPubkey;
+    contactData_[data.contact] = data.sock;
     auth.serverState = AuthData::ServerState::Complete;
+
+    if (onConnectCb_) {
+        onConnectCb_(data.contact, true);
+    }
 }
 
 Buffer::UniquePtr AuthData::encryptTx(Buffer::UniquePtr buffer) {
