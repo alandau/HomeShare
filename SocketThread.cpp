@@ -448,7 +448,7 @@ void SocketThread::handleIncomingMessage(SocketData& data, Buffer::UniquePtr mes
             CloseSocket(data.sock);
             return;
         }
-        onMessageCb_(Contact{ "blah" }, std::move(message));
+        onMessageCb_(data.contact, std::move(message));
         return;
     }
 

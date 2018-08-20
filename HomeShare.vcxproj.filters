@@ -285,6 +285,9 @@
     <ClInclude Include="lib\sqlite3.h">
       <Filter>lib</Filter>
     </ClInclude>
+    <ClInclude Include="Database.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="HomeShare.cpp">
@@ -307,6 +310,9 @@
     </ClCompile>
     <ClCompile Include="lib\sqlite3.c">
       <Filter>lib</Filter>
+    </ClCompile>
+    <ClCompile Include="Database.cpp">
+      <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

@@ -143,6 +143,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="Database.cpp" />
     <ClCompile Include="DiscoveryThread.cpp" />
     <ClCompile Include="DiskThread.cpp" />
     <ClCompile Include="HomeShare.cpp" />
@@ -152,6 +153,7 @@
     <ClCompile Include="SocketThread.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="Database.h" />
     <ClInclude Include="DiscoveryThread.h" />
     <ClInclude Include="DiskThread.h" />
     <ClInclude Include="lib\Buffer.h" />

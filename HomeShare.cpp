@@ -5,6 +5,7 @@
 #include "DiskThread.h"
 #include "DiscoveryThread.h"
 #include "Logger.h"
+#include "Database.h"
 #include "lib/sodium.h"
 #include "lib/crypto.h"
 #include "resource.h"
@@ -21,6 +22,14 @@ std::string g_remotePubkey;
 static std::wstring GetDesktopPath() {
     wchar_t path[MAX_PATH];
     if (FAILED(SHGetFolderPath(NULL, CSIDL_DESKTOPDIRECTORY, NULL, SHGFP_TYPE_CURRENT, path))) {
+        return L"";
+    }
+    return path;
+}
+
+static std::wstring GetAppDataPath() {
+    wchar_t path[MAX_PATH];
+    if (FAILED(SHGetFolderPath(NULL, CSIDL_APPDATA, NULL, SHGFP_TYPE_CURRENT, path))) {
         return L"";
     }
     return path;
@@ -60,6 +69,10 @@ public:
     {}
 protected:
     void logString(LogLevel level, const std::wstring& s) override {
+        if (level == F) {
+            MessageBox(window_->GetHWND(), s.c_str(), L"Fatal Error", MB_ICONERROR | MB_OK);
+            ExitProcess(1);
+        }
         window_->RunInThread([this, level, s] {
             logStringImpl(level, s);
         });
@@ -122,18 +135,21 @@ class RootWindow : public Window
 {
 public:
     LPCTSTR ClassName() override { return TEXT("HomeShare"); }
-    void PaintContent(PAINTSTRUCT* pps) override;
-    static RootWindow *Create();
+    static RootWindow *Create(const std::wstring& path);
+    void SetDbPath(const std::wstring& path);
 protected:
-    LRESULT HandleMessage(UINT uMsg, WPARAM wParam, LPARAM lParam);
+    LRESULT HandleMessage(UINT uMsg, WPARAM wParam, LPARAM lParam) override;
+    void PaintContent(PAINTSTRUCT* pps) override;
     LRESULT OnCreate();
     LRESULT OnNotify(NMHDR* pnm);
     void OnGetDispInfo(NMLVDISPINFO* pnmv);
 private:
     HWND logView_;
     HWND contactView_;
+    std::wstring dbPath_;
     std::vector<ContactData> contactData_;
     std::unique_ptr<ListViewLogger> logger_;
+    std::unique_ptr<Database> db_;
     std::unique_ptr<SocketThreadApi> socketThread_;
     std::unique_ptr<DiskThread> diskThread_;
     std::unique_ptr<DiscoveryThread> discoveryThread_;
@@ -230,8 +246,15 @@ LRESULT RootWindow::OnCreate()
     ListView_InsertColumn(contactView_, 4, &lvc);
 
     logger_.reset(new ListViewLogger(this, logView_));
-    std::string pub(crypto_sign_PUBLICKEYBYTES, '\0'), priv(crypto_sign_SECRETKEYBYTES, '\0');
-    crypto_sign_keypair((unsigned char*)pub.data(), (unsigned char*)priv.data());
+
+    db_.reset(new Database(*logger_));
+    if (!db_->OpenOrCreate(dbPath_)) {
+        MessageBox(GetHWND(), fmt::format(L"Can't open/create database at {}", dbPath_).c_str(), L"HomeShare", MB_ICONERROR | MB_OK);
+        return -1;
+    }
+
+    std::string pub, priv;
+    db_->GetKeys(&pub, &priv);
     logger_->i(L"My public key: {}", keyToDisplayStr(pub));
 
     contactData_.push_back({ { pub }, L"Me" , "127.0.0.1", 8890 });
@@ -500,17 +523,22 @@ void RootWindow::SelectAndSendFile(const ContactData& contactData)
     }
 }
 
-RootWindow *RootWindow::Create()
+RootWindow *RootWindow::Create(const std::wstring& path)
 {
     RootWindow *self = new RootWindow();
+    self->SetDbPath(path);
     if (self->WinCreateWindow(0,
             TEXT("HomeShare"), WS_OVERLAPPEDWINDOW,
             CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
             NULL, LoadMenu(g_hinst, MAKEINTRESOURCE(IDR_MENU1)))) {
         return self;
     }
-    delete self;
+    // self will be deleted if window creation failed
     return nullptr;
+}
+
+void RootWindow::SetDbPath(const std::wstring& path) {
+    dbPath_ = path;
 }
 
 void RootWindow::PaintContent(PAINTSTRUCT* pps) {
@@ -544,19 +572,14 @@ WinMain(HINSTANCE hinst, HINSTANCE, LPSTR, int nShowCmd)
 
     int argc;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLine(), &argc);
-    if (argc > 2) {
-        g_remoteIp = Utf16ToUtf8(argv[1]);
-        g_remotePubkey = displayStrToKey(argv[2]);
-        if (g_remotePubkey.empty()) {
-            MessageBox(NULL, L"Bad remote pubkey", L"HomeShare", MB_OK);
-            return 1;
-        }
-    }
+    std::wstring dbpath = argc >= 2
+        ? argv[1]
+        : GetAppDataPath() + L"\\HomeShare.db";
 
     ComInit comInit;
     InitCommonControls();
 
-    RootWindow* w = RootWindow::Create();
+    RootWindow* w = RootWindow::Create(dbpath);
     if (!w) {
         MessageBox(NULL, L"Can't create main window", NULL, MB_OK);
         return 1;
