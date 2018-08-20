@@ -282,6 +282,9 @@
     <ClInclude Include="lib\crypto.h">
       <Filter>lib</Filter>
     </ClInclude>
+    <ClInclude Include="lib\sqlite3.h">
+      <Filter>lib</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="HomeShare.cpp">
@@ -301,6 +304,9 @@
     </ClCompile>
     <ClCompile Include="DiscoveryThread.cpp">
       <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="lib\sqlite3.c">
+      <Filter>lib</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

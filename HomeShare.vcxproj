@@ -146,6 +146,7 @@
     <ClCompile Include="DiscoveryThread.cpp" />
     <ClCompile Include="DiskThread.cpp" />
     <ClCompile Include="HomeShare.cpp" />
+    <ClCompile Include="lib\sqlite3.c" />
     <ClCompile Include="lib\win\MessageThread.cpp" />
     <ClCompile Include="lib\win\window.cpp" />
     <ClCompile Include="SocketThread.cpp" />
@@ -224,6 +225,7 @@
     <ClInclude Include="lib\sodium\runtime.h" />
     <ClInclude Include="lib\sodium\utils.h" />
     <ClInclude Include="lib\sodium\version.h" />
+    <ClInclude Include="lib\sqlite3.h" />
     <ClInclude Include="lib\win\encoding.h" />
     <ClInclude Include="lib\win\MessageThread.h" />
     <ClInclude Include="lib\win\raii.h" />
