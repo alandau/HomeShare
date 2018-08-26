@@ -102,7 +102,7 @@ protected:
         item.mask = LVIF_TEXT | LVIF_IMAGE;
         item.iItem = INT_MAX;
         item.iSubItem = 0;
-        item.iImage = level == D ? -1 : (int)level;
+        item.iImage = level == D ? -1 : (int)level - (int)E;
         item.pszText = const_cast<LPWSTR>(levelStr.c_str());
         item.iItem = ListView_InsertItem(listView_, &item);
         if (item.iItem >= 0) {
