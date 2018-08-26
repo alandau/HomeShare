@@ -124,6 +124,7 @@ struct ContactData {
         Disconnected, Connecting, Connected
     };
     Contact c;
+    bool known;
     std::wstring displayName;
     std::string host;
     uint16_t port;
@@ -143,6 +144,7 @@ protected:
     LRESULT OnCreate();
     LRESULT OnNotify(NMHDR* pnm);
     void OnGetDispInfo(NMLVDISPINFO* pnmv);
+    LRESULT OnLVCustomDraw(NMLVCUSTOMDRAW* pcd);
 private:
     HWND logView_;
     HWND contactView_;
@@ -257,9 +259,9 @@ LRESULT RootWindow::OnCreate()
     db_->GetKeys(&pub, &priv);
     logger_->i(L"My public key: {}", keyToDisplayStr(pub));
 
-    contactData_.push_back({ { pub }, L"Me" , "127.0.0.1", 8890 });
+    contactData_.push_back({ { pub }, true, L"Me" , "127.0.0.1", 8890 });
     if (!g_remoteIp.empty()) {
-        contactData_.push_back({ { g_remotePubkey }, L"Other" , g_remoteIp, 8890 });
+        contactData_.push_back({ { g_remotePubkey }, true, L"Other" , g_remoteIp, 8890 });
     }
 
     ListView_SetItemCount(contactView_, contactData_.size());
@@ -346,6 +348,11 @@ LRESULT RootWindow::OnNotify(NMHDR *pnm) {
         switch (pnm->code) {
         case LVN_GETDISPINFO:
             OnGetDispInfo(CONTAINING_RECORD(pnm, NMLVDISPINFO, hdr));
+            break;
+        case NM_CUSTOMDRAW:
+            return OnLVCustomDraw(CONTAINING_RECORD(
+                CONTAINING_RECORD(pnm, NMCUSTOMDRAW, hdr),
+                NMLVCUSTOMDRAW, nmcd));
             break;
         case NM_RCLICK: {
             NMITEMACTIVATE* nma = CONTAINING_RECORD(pnm, NMITEMACTIVATE, hdr);
@@ -461,6 +468,32 @@ void RootWindow::OnGetDispInfo(NMLVDISPINFO* pnmv) {
     }
 }
 
+LRESULT RootWindow::OnLVCustomDraw(NMLVCUSTOMDRAW* pcd)
+{
+    switch (pcd->nmcd.dwDrawStage) {
+    case CDDS_PREPAINT:
+        return CDRF_NOTIFYITEMDRAW;
+    case CDDS_ITEMPREPAINT:
+        if (pcd->nmcd.dwItemSpec < contactData_.size() && !contactData_[pcd->nmcd.dwItemSpec].known) {
+            pcd->clrText = RGB(255, 0, 0);
+        }
+        break;
+        //return CDRF_NOTIFYSUBITEMDRAW;
+#if 0
+    case CDDS_ITEMPREPAINT | CDDS_SUBITEM:
+        pcd->clrText = m_clrTextNormal;
+        if (pcd->iSubItem == COL_SIMP &&
+            pcd->nmcd.dwItemSpec < (DWORD)Length()) {
+            const DictionaryEntry& de = Item(pcd->nmcd.dwItemSpec);
+            if (de.m_pszSimp) {
+                pcd->clrText = RGB(0x80, 0x00, 0x00);
+            }
+        }
+        break;
+#endif
+    }
+    return CDRF_DODEFAULT;
+}
 LRESULT RootWindow::HandleMessage(UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
     switch (uMsg) {
