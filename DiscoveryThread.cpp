@@ -104,7 +104,7 @@ void DiscoveryThread::OnRead(SOCKET s) {
         DiscoveryResp resp;
         resp.ip = sockaddr_to_str(*(sockaddr*)&sockets_[s].localAddr);
         resp.port = 8890;
-        resp.pubkey = resp.ip;
+        resp.pubkey = pubkey_;
         QueueItem item;
         item.buffer = Serializer().serialize(resp);
         uint8_t* magicPos = item.buffer->prependHeader(sizeof(uint32_t));

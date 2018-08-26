@@ -95,3 +95,34 @@ void Database::initSchema() {
 void Database::upgradeDb(int oldver) {
     log.f(L"Can't upgrade database from version {} to {}", oldver, CURRENT_DB_VERSION);
 }
+
+std::vector<Database::Contact> Database::GetContacts() {
+    Stmt stmt = createStatement("SELECT id, pubkey, name, staticip FROM contacts");
+    int res = sqlite3_step(stmt.get());
+    if (res != SQLITE_ROW && res != SQLITE_DONE) {
+        log.e(L"Can't query contacts in database: {}", res);
+        return {};
+    }
+    std::vector<Contact> vec;
+    while (res == SQLITE_ROW) {
+        Contact c;
+        c.id = sqlite3_column_int(stmt.get(), 0);
+        c.pubkey = (const char *)sqlite3_column_text(stmt.get(), 1);
+        c.name = (const wchar_t *)sqlite3_column_text16(stmt.get(), 2);
+        const char* host = (const char *)sqlite3_column_text(stmt.get(), 3);
+        c.host = host ? host : "";
+        vec.push_back(std::move(c));
+        res = sqlite3_step(stmt.get());
+    }
+    return vec;
+}
+
+void Database::AddContact(const std::string& pubkey, const std::wstring& name) {
+    Stmt stmt = createStatement("INSERT INTO contacts (pubkey, name) VALUES (?,?)");
+    sqlite3_bind_blob(stmt.get(), 1, pubkey.data(), pubkey.size(), SQLITE_STATIC);
+    sqlite3_bind_text16(stmt.get(), 2, name.c_str(), -1, SQLITE_STATIC);
+    int res = sqlite3_step(stmt.get());
+    if (res != SQLITE_DONE) {
+        log.e(L"Can't add contact: {}", res);
+    }
+}

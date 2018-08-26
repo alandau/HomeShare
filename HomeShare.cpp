@@ -16,9 +16,6 @@
 #include <shlobj.h>
 #include <shellapi.h>
 
-std::string g_remoteIp;
-std::string g_remotePubkey;
-
 static std::wstring GetDesktopPath() {
     wchar_t path[MAX_PATH];
     if (FAILED(SHGetFolderPath(NULL, CSIDL_DESKTOPDIRECTORY, NULL, SHGFP_TYPE_CURRENT, path))) {
@@ -123,13 +120,20 @@ struct ContactData {
     enum class ConnectState {
         Disconnected, Connecting, Connected
     };
-    Contact c;
-    bool known;
-    std::wstring displayName;
-    std::string host;
-    uint16_t port;
-    ConnectState connectState = ConnectState::Disconnected;
-    ProgressUpdate prevProgress, progress;
+    // Static data coming from the database
+    struct {
+        Contact c;
+        bool known = false;
+        std::wstring displayName;
+        std::string host;
+    } stat;
+    // Dynamic data updated on the fly
+    struct {
+        std::string host;
+        uint16_t port;
+        ConnectState connectState = ConnectState::Disconnected;
+        ProgressUpdate prevProgress, progress;
+    } dyn;
 };
 
 class RootWindow : public Window
@@ -158,15 +162,59 @@ private:
 
     void SelectAndSendFile(const ContactData& contactData);
     int GetContactIndex(const Contact& c);
+    bool GetContactHostAndPort(const ContactData& c, std::string* hostname = nullptr, uint16_t* port = nullptr);
+    void LoadContactsFromDb();
+    void AddToContacts(const ContactData& c);
 };
 
 int RootWindow::GetContactIndex(const Contact& c) {
     for (int i = 0; i < (int)contactData_.size(); i++) {
-        if (contactData_[i].c == c) {
+        if (contactData_[i].stat.c == c) {
             return i;
         }
     }
     return -1;
+}
+
+bool RootWindow::GetContactHostAndPort(const ContactData& c, std::string* hostname, uint16_t* port) {
+    if (!c.dyn.host.empty()) {
+        if (hostname) {
+            *hostname = c.dyn.host;
+            *port = c.dyn.port;
+        }
+        return true;
+    }
+    if (!c.stat.host.empty()) {
+        if (hostname) {
+            *hostname = c.stat.host;
+            *port = 8890;
+        }
+        return true;
+    }
+    return false;
+}
+
+void RootWindow::LoadContactsFromDb() {
+    std::vector<Database::Contact> contacts = db_->GetContacts();
+    for (const Database::Contact& c : contacts) {
+        int index = GetContactIndex(Contact{ c.pubkey });
+        if (index != -1) {
+            ContactData& data = contactData_[index];
+            data.stat.displayName = c.name;
+            data.stat.host = c.host;
+            data.stat.known = true;
+        } else {
+            ContactData data;
+            data.stat.c = Contact{ c.pubkey };
+            data.stat.displayName = c.name;
+            data.stat.host = c.host;
+            data.stat.known = true;
+            contactData_.push_back(std::move(data));
+        }
+    }
+    ListView_SetItemCount(contactView_, contactData_.size());
+    ListView_RedrawItems(contactView_, 0, contactData_.size() - 1);
+    UpdateWindow(contactView_);
 }
 
 LRESULT RootWindow::OnCreate()
@@ -259,12 +307,7 @@ LRESULT RootWindow::OnCreate()
     db_->GetKeys(&pub, &priv);
     logger_->i(L"My public key: {}", keyToDisplayStr(pub));
 
-    contactData_.push_back({ { pub }, true, L"Me" , "127.0.0.1", 8890 });
-    if (!g_remoteIp.empty()) {
-        contactData_.push_back({ { g_remotePubkey }, true, L"Other" , g_remoteIp, 8890 });
-    }
-
-    ListView_SetItemCount(contactView_, contactData_.size());
+    LoadContactsFromDb();
 
     socketThread_.reset(new SocketThreadApi);
     socketThread_->Init(logger_.get(), pub, priv);
@@ -275,7 +318,7 @@ LRESULT RootWindow::OnCreate()
                 // Can happen if the remote end which is not a contact connected/disconnected to us
                 return;
             }
-            contactData_[index].connectState = connected
+            contactData_[index].dyn.connectState = connected
                 ? ContactData::ConnectState::Connected
                 : ContactData::ConnectState::Disconnected;
             ListView_RedrawItems(contactView_, index, index);
@@ -285,7 +328,8 @@ LRESULT RootWindow::OnCreate()
     socketThread_->setIsKnownContact([this](const std::string& pubkey) {
         return !!RunInThreadWithResult([this, pubkey] {
             Contact c{pubkey};
-            bool found = GetContactIndex(c) != -1;
+            int index = GetContactIndex(c);
+            bool found = index != -1 && contactData_[index].stat.known;
             if (!found) {
                 RunInThread([this, pubkey] {
                     if (MessageBox(GetHWND(),
@@ -295,10 +339,9 @@ LRESULT RootWindow::OnCreate()
                         return;
                     }
                     ContactData d;
-                    d.c = Contact{pubkey};
-                    d.displayName = keyToDisplayStr(pubkey);
-                    contactData_.push_back(std::move(d));
-                    ListView_SetItemCount(contactView_, contactData_.size());
+                    d.stat.c = Contact{pubkey};
+                    d.stat.displayName = keyToDisplayStr(pubkey);
+                    AddToContacts(d);
                 });
             }
             return found;
@@ -314,25 +357,38 @@ LRESULT RootWindow::OnCreate()
             }
             auto now = std::chrono::steady_clock::now();
             ContactData& data = contactData_[index];
-            data.prevProgress = data.progress;
-            data.progress = up;
+            data.dyn.prevProgress = data.dyn.progress;
+            data.dyn.progress = up;
             ListView_RedrawItems(contactView_, index, index);
             UpdateWindow(contactView_);
         });
     });
     diskThread_->Start();
 
-    discoveryThread_.reset(new DiscoveryThread(*logger_));
+    discoveryThread_.reset(new DiscoveryThread(*logger_, pub));
     discoveryThread_->setOnResult([this](const std::vector<DiscoveryThread::DiscoveryResult>& result) {
         RunInThread([this, result] {
-            contactData_.clear();
+            contactData_.erase(std::remove_if(contactData_.begin(), contactData_.end(), [this](const ContactData& c) {
+                return !c.stat.known;
+            }), contactData_.end());
+            for (ContactData& c : contactData_) {
+                c.dyn.host.clear();
+            }
             for (const DiscoveryThread::DiscoveryResult& r : result) {
-                ContactData c;
-                c.c.pubkey = r.pubkey;
-                c.host = r.host;
-                c.port = r.port;
-                c.displayName = Utf8ToUtf16(fmt::format("{}:{}", c.host, c.port));
-                contactData_.push_back(std::move(c));
+                int index = GetContactIndex(Contact{ r.pubkey });
+                if (index != -1) {
+                    // Update existing contact's dyn data
+                    ContactData& c = contactData_[index];
+                    c.dyn.host = r.host;
+                    c.dyn.port = r.port;
+                } else {
+                    ContactData c;
+                    c.stat.c.pubkey = r.pubkey;
+                    c.stat.displayName = Utf8ToUtf16(fmt::format("{}:{}", r.host, r.port));
+                    c.dyn.host = r.host;
+                    c.dyn.port = r.port;
+                    contactData_.push_back(std::move(c));
+                }
             }
             ListView_SetItemCount(contactView_, contactData_.size());
             ListView_RedrawItems(contactView_, 0, contactData_.size() - 1);
@@ -360,26 +416,38 @@ LRESULT RootWindow::OnNotify(NMHDR *pnm) {
                 break;
             }
             ContactData& data = contactData_[nma->iItem];
-            bool conn = data.connectState == ContactData::ConnectState::Connected;
+            bool conn = data.dyn.connectState == ContactData::ConnectState::Connected;
             HMENU hMenu = CreatePopupMenu();
             AppendMenu(hMenu, MF_STRING | (conn ? MF_GRAYED : 0), 1, L"Connect");
             AppendMenu(hMenu, MF_STRING | (!conn ? MF_GRAYED : 0), 2, L"Disconnect");
             AppendMenu(hMenu, MF_STRING | (!conn ? MF_GRAYED : 0), 3, L"Send File");
+            if (!data.stat.known) {
+                AppendMenu(hMenu, MF_STRING, 4, L"Add to contacts");
+            }
             POINT p;
             GetCursorPos(&p);
             int item = TrackPopupMenu(hMenu, TPM_RETURNCMD, p.x, p.y, 0, GetHWND(), NULL);
             switch (item) {
-            case 1:
-                data.connectState = ContactData::ConnectState::Connecting;
-                socketThread_->Connect(data.c, data.host, data.port);
+            case 1: {
+                std::string hostname;
+                uint16_t port;
+                if (!GetContactHostAndPort(data, &hostname, &port)) {
+                    break;
+                }
+                data.dyn.connectState = ContactData::ConnectState::Connecting;
+                socketThread_->Connect(data.stat.c, hostname, port);
                 ListView_RedrawItems(contactView_, nma->iItem, nma->iItem);
                 UpdateWindow(contactView_);
                 break;
+            }
             case 2:
-                socketThread_->Disconnect(data.c);
+                socketThread_->Disconnect(data.stat.c);
                 break;
             case 3:
                 SelectAndSendFile(data);
+                break;
+            case 4:
+                AddToContacts(data);
                 break;
             }
             break;
@@ -424,32 +492,32 @@ void RootWindow::OnGetDispInfo(NMLVDISPINFO* pnmv) {
     if (pnmv->item.mask & LVIF_TEXT) {
         switch (pnmv->item.iSubItem) {
         case 0: 
-            pnmv->item.pszText = const_cast<LPWSTR>(data.displayName.c_str());
+            pnmv->item.pszText = const_cast<LPWSTR>(data.stat.displayName.c_str());
             break;
         case 1:
             pnmv->item.pszText =
-                data.connectState == ContactData::ConnectState::Connected ? L"Connected" :
-                data.connectState == ContactData::ConnectState::Disconnected ? L"Disconnected" :
-                data.connectState == ContactData::ConnectState::Connecting ? L"Connecting" : L"";
+                data.dyn.connectState == ContactData::ConnectState::Connected ? L"Connected" :
+                data.dyn.connectState == ContactData::ConnectState::Disconnected ? L"Disconnected" :
+                data.dyn.connectState == ContactData::ConnectState::Connecting ? L"Connecting" : L"";
             break;
         case 2: {
-            std::wstring res = fmt::format(L"{} / {}", data.progress.doneFiles, data.progress.totalFiles);
+            std::wstring res = fmt::format(L"{} / {}", data.dyn.progress.doneFiles, data.dyn.progress.totalFiles);
             lstrcpyn(pnmv->item.pszText, res.c_str(), pnmv->item.cchTextMax);
             break;
         }
         case 3: {
-            std::wstring res = formatSize(data.progress.doneBytes, data.progress.totalBytes);
+            std::wstring res = formatSize(data.dyn.progress.doneBytes, data.dyn.progress.totalBytes);
             lstrcpyn(pnmv->item.pszText, res.c_str(), pnmv->item.cchTextMax);
             break;
         }
         case 4: {
-            if (data.prevProgress.timestamp == std::chrono::steady_clock::time_point()) {
+            if (data.dyn.prevProgress.timestamp == std::chrono::steady_clock::time_point()) {
                 // First progress, ignore
                 pnmv->item.pszText[0] = L'\0';
             } else {
                 using float_seconds = std::chrono::duration<double>;
-                uint64_t diffBytes = data.progress.doneBytes - data.prevProgress.doneBytes;
-                std::chrono::steady_clock::duration diffTime = data.progress.timestamp - data.prevProgress.timestamp;
+                uint64_t diffBytes = data.dyn.progress.doneBytes - data.dyn.prevProgress.doneBytes;
+                std::chrono::steady_clock::duration diffTime = data.dyn.progress.timestamp - data.dyn.prevProgress.timestamp;
                 double speed = diffBytes / float_seconds(diffTime).count();
                 std::wstring res = formatSpeed(speed);
                 lstrcpyn(pnmv->item.pszText, res.c_str(), pnmv->item.cchTextMax);
@@ -474,8 +542,15 @@ LRESULT RootWindow::OnLVCustomDraw(NMLVCUSTOMDRAW* pcd)
     case CDDS_PREPAINT:
         return CDRF_NOTIFYITEMDRAW;
     case CDDS_ITEMPREPAINT:
-        if (pcd->nmcd.dwItemSpec < contactData_.size() && !contactData_[pcd->nmcd.dwItemSpec].known) {
-            pcd->clrText = RGB(255, 0, 0);
+        if (pcd->nmcd.dwItemSpec < contactData_.size()) {
+            const ContactData& c = contactData_[pcd->nmcd.dwItemSpec];
+            if (c.dyn.connectState == ContactData::ConnectState::Connected) {
+                pcd->clrTextBk = RGB(0, 255, 0);
+            } else if (!c.stat.known) {
+                pcd->clrText = RGB(255, 0, 0);
+            } else if (GetContactHostAndPort(c)) {
+                pcd->clrText = RGB(0, 128, 0);
+            }
         }
         break;
         //return CDRF_NOTIFYSUBITEMDRAW;
@@ -552,8 +627,13 @@ void RootWindow::SelectAndSendFile(const ContactData& contactData)
     ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
 
     if (GetOpenFileName(&ofn)) {
-        diskThread_->Enqueue(contactData.c, filename);
+        diskThread_->Enqueue(contactData.stat.c, filename);
     }
+}
+
+void RootWindow::AddToContacts(const ContactData& c) {
+    db_->AddContact(c.stat.c.pubkey, L"Name " + keyToDisplayStr(c.stat.c.pubkey));
+    LoadContactsFromDb();
 }
 
 RootWindow *RootWindow::Create(const std::wstring& path)

@@ -15,8 +15,9 @@ public:
         uint16_t port;
     };
 
-    DiscoveryThread(Logger& logger)
+    DiscoveryThread(Logger& logger, const std::string& pubkey)
         : log(logger)
+        , pubkey_(pubkey)
     {}
     ~DiscoveryThread() {
         for (const auto& si : sockets_) {
@@ -43,6 +44,7 @@ private:
     };
 
     Logger& log;
+    std::string pubkey_;
     std::unordered_map<SOCKET, SocketData> sockets_;
     std::function<void(const std::vector<DiscoveryResult>& result)> resultCb_;
     std::vector<DiscoveryResult> discoveryResults_;
