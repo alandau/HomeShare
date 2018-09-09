@@ -13,7 +13,7 @@ public:
     Buffer::UniquePtr serialize(T t);
 
     template <class T>
-    T deserialize(Buffer* buf);
+    bool deserialize(T& t, Buffer* buf);
 };
 
 struct SizeHelper {
@@ -135,14 +135,15 @@ private:
     }
 
     void readImpl(bool& v) { uint8_t val; readImpl(val); v = val; }
-    void readImpl(uint8_t& v) { memcpy(&v, b->readData(), sizeof(v)); b->adjustReadPos(sizeof(v)); }
-    void readImpl(uint16_t& v) { memcpy(&v, b->readData(), sizeof(v)); b->adjustReadPos(sizeof(v)); }
-    void readImpl(uint32_t& v) { memcpy(&v, b->readData(), sizeof(v)); b->adjustReadPos(sizeof(v)); }
-    void readImpl(uint64_t& v) { memcpy(&v, b->readData(), sizeof(v)); b->adjustReadPos(sizeof(v)); }
+    void readImpl(uint8_t& v) { b->ensureHasReadData(sizeof(v)); memcpy(&v, b->readData(), sizeof(v)); b->adjustReadPos(sizeof(v)); }
+    void readImpl(uint16_t& v) { b->ensureHasReadData(sizeof(v)); memcpy(&v, b->readData(), sizeof(v)); b->adjustReadPos(sizeof(v)); }
+    void readImpl(uint32_t& v) { b->ensureHasReadData(sizeof(v)); memcpy(&v, b->readData(), sizeof(v)); b->adjustReadPos(sizeof(v)); }
+    void readImpl(uint64_t& v) { b->ensureHasReadData(sizeof(v)); memcpy(&v, b->readData(), sizeof(v)); b->adjustReadPos(sizeof(v)); }
     void readImpl(std::string& v) {
         uint32_t size;
         readImpl(size);
         v.resize(size);
+        b->ensureHasReadData(size);
         memcpy(&v[0], b->readData(), size);
         b->adjustReadPos(size);
     }
@@ -165,10 +166,13 @@ private:
 };
 
 template <class T>
-T Serializer::deserialize(Buffer* buf) {
-    DeserializeHelper deserHelper(buf);
-    T t;
-    t.visit(deserHelper);
-    buf->adjustReadPos(1);
-    return t;
+bool Serializer::deserialize(T& t, Buffer* buf) {
+    try {
+        DeserializeHelper deserHelper(buf);
+        t.visit(deserHelper);
+        buf->adjustReadPos(1);
+        return true;
+    } catch (...) {
+        return false;
+    }
 }

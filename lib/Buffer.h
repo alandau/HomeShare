@@ -46,6 +46,8 @@ public:
     void adjustReadPos(intptr_t diff) { readPos_ += diff; assert(readPos_ <= capacity()); }
     void adjustWritePos(intptr_t diff) { writePos_ += diff; assert(writePos_ <= capacity()); }
 
+    void ensureHasReadData(size_t size) { if (readSize() < size) throw std::runtime_error("Too little data"); }
+
     uint8_t* prependHeader(size_t size) {
         buffer_ -= size;
         capacity_ += size;

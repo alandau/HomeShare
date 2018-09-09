@@ -114,12 +114,14 @@ void DiscoveryThread::OnRead(SOCKET s) {
         item.addrlen = fromlen;
         Send(s, std::move(item));
     } else if (magic == DISCOVERY_RESP_MAGIC) {
-        DiscoveryResp resp = Serializer().deserialize<DiscoveryResp>(data.get());
-        DiscoveryResult res;
-        res.pubkey = resp.pubkey;
-        res.host = resp.ip;
-        res.port = resp.port;
-        discoveryResults_.push_back(std::move(res));
+        DiscoveryResp resp;
+        if (Serializer().deserialize(resp, data.get())) {
+            DiscoveryResult res;
+            res.pubkey = resp.pubkey;
+            res.host = resp.ip;
+            res.port = resp.port;
+            discoveryResults_.push_back(std::move(res));
+        }
     } else {
         log.d(L"Received bad discovery magic 0x{:08x}", magic);
     }

@@ -511,9 +511,9 @@ void SocketThread::SendClientHelloMessage(SocketData& data) {
 void SocketThread::ServerRecvClientHelloMessage(SocketData& data, Buffer::UniquePtr message) {
     AuthData& auth = data.auth;
     {
-        ClientHelloMessage msg = Serializer().deserialize<ClientHelloMessage>(message.get());
-
-        if (msg.random.size() != 32 ||
+        ClientHelloMessage msg;
+        if (!Serializer().deserialize(msg, message.get()) ||
+            msg.random.size() != 32 ||
             msg.kexKeyShare.size() != crypto_kx_PUBLICKEYBYTES ||
             msg.nonce.size() != crypto_aead_chacha20poly1305_ietf_NPUBBYTES) {
             CloseSocket(data.sock);
@@ -578,9 +578,10 @@ void SocketThread::ServerRecvClientHelloMessage(SocketData& data, Buffer::Unique
 
 void SocketThread::ClientRecvServerHelloFinishedMessage(SocketData& data, Buffer::UniquePtr message) {
     AuthData& auth = data.auth;
-    ServerHelloFinishedMessage msg = Serializer().deserialize<ServerHelloFinishedMessage>(message.get());
+    ServerHelloFinishedMessage msg;
 
-    if (msg.random.size() != 32 ||
+    if (!Serializer().deserialize(msg, message.get()) ||
+        msg.random.size() != 32 ||
         msg.kexKeyShare.size() != crypto_kx_PUBLICKEYBYTES ||
         msg.nonce.size() != crypto_aead_chacha20poly1305_ietf_NPUBBYTES ||
         msg.encryptedSignatureMessage.size() > 2000) {
@@ -619,8 +620,10 @@ void SocketThread::ClientRecvServerHelloFinishedMessage(SocketData& data, Buffer
             return;
         }
 
-        SignatureMessage serversigmsg = Serializer().deserialize<SignatureMessage>(decrypted.get());
-        if (serversigmsg.pubkey.size() != crypto_sign_PUBLICKEYBYTES || serversigmsg.signature.size() != crypto_sign_BYTES) {
+        SignatureMessage serversigmsg;
+        if (!Serializer().deserialize(serversigmsg, decrypted.get()) ||
+            serversigmsg.pubkey.size() != crypto_sign_PUBLICKEYBYTES ||
+            serversigmsg.signature.size() != crypto_sign_BYTES) {
             log.d(L"Client: Wrong server pubkey or signature size");
             CloseSocket(data.sock);
             return;
@@ -678,9 +681,9 @@ void SocketThread::ClientRecvServerHelloFinishedMessage(SocketData& data, Buffer
 
 void SocketThread::ServerRecvClientFinishedMessage(SocketData& data, Buffer::UniquePtr message) {
     AuthData& auth = data.auth;
-    ClientFinishedMessage msg = Serializer().deserialize<ClientFinishedMessage>(message.get());
+    ClientFinishedMessage msg;
 
-    if (msg.encryptedSignatureMessage.size() > 2000) {
+    if (!Serializer().deserialize(msg, message.get()) || msg.encryptedSignatureMessage.size() > 2000) {
         CloseSocket(data.sock);
         log.d(L"Server:Bad ClientFinished");
         return;
@@ -697,8 +700,10 @@ void SocketThread::ServerRecvClientFinishedMessage(SocketData& data, Buffer::Uni
         return;
     }
 
-    SignatureMessage sigmsg = Serializer().deserialize<SignatureMessage>(decrypted.get());
-    if (sigmsg.pubkey.size() != crypto_sign_PUBLICKEYBYTES || sigmsg.signature.size() != crypto_sign_BYTES) {
+    SignatureMessage sigmsg;
+    if (!Serializer().deserialize(sigmsg, decrypted.get()) ||
+        sigmsg.pubkey.size() != crypto_sign_PUBLICKEYBYTES ||
+        sigmsg.signature.size() != crypto_sign_BYTES) {
         log.d(L"Server: Wrong client pubkey or signature size");
         CloseSocket(data.sock);
         return;

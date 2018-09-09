@@ -182,7 +182,11 @@ void DiskThread::OnMessageReceived(const Contact& c, Buffer::UniquePtr message) 
             log.e(L"Expected type SENDFILE_HEADER, got {}", header.type);
             return;
         }
-        SendFileHeader fileHeader = Serializer().deserialize<SendFileHeader>(message.get());
+        SendFileHeader fileHeader;
+        if (!Serializer().deserialize(fileHeader, message.get())) {
+            log.e(L"Can't deserialize SendFileHeader");
+            return;
+        }
         std::wstring origFilename = Utf8ToUtf16(fileHeader.name);
         log.i(L"Receiving file '{}' of size {}", origFilename, fileHeader.size);
 
@@ -210,7 +214,13 @@ void DiskThread::OnMessageReceived(const Contact& c, Buffer::UniquePtr message) 
                 message->adjustReadPos(count);
             }
         } else if (header.type == SENDFILE_TRAILER) {
-            SendFileTrailer fileTrailer = Serializer().deserialize<SendFileTrailer>(message.get());
+            SendFileTrailer fileTrailer;
+            if (!Serializer().deserialize(fileTrailer, message.get())) {
+                log.e(L"Can't deserialize SendfileTrailer");
+                CloseHandle(data.hReceiveFile);
+                data.hReceiveFile = NULL;
+                return;
+            }
             log.i(L"Finished receiving file, checksum = {}", fileTrailer.checksum);
             CloseHandle(data.hReceiveFile);
             data.hReceiveFile = NULL;
