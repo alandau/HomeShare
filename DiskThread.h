@@ -5,6 +5,7 @@
 #include "SocketThread.h"
 #include "Logger.h"
 #include "proto/file.h"
+#include "lib/crypto.h"
 #include <deque>
 #include <memory>
 
@@ -34,6 +35,7 @@ private:
         std::wstring filename;
         State state = State::SEND_HEADER;
         HANDLE hFile = NULL;
+        GenericHash hash;
     };
     struct SendData {
         std::deque<QueueItem> queue_;
@@ -42,6 +44,9 @@ private:
         enum class State { RECEIVE_HEADER, RECEIVE_DATA_OR_TRAILER };
         State state = State::RECEIVE_HEADER;
         HANDLE hReceiveFile = NULL;
+        uint64_t receivedCount;
+        uint64_t receiveSize;
+        GenericHash hash;
         std::wstring receiveFilename;
     };
     using Map = std::unordered_map<Contact, std::unique_ptr<SendData>>;

@@ -34,10 +34,16 @@ inline std::string displayStrToKey(const std::wstring& disp) {
 class GenericHash {
 public:
     GenericHash() {
+        reset();
+    }
+    void reset() {
         crypto_generichash_init(&hash, NULL, 0, crypto_generichash_BYTES);
     }
     void update(const std::string& s) {
         crypto_generichash_update(&hash, (const unsigned char*)s.data(), s.size());
+    }
+    void update(const unsigned char* buf, size_t size) {
+        crypto_generichash_update(&hash, buf, size);
     }
     std::string result() {
         std::string s(crypto_generichash_BYTES, '\0');

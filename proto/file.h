@@ -25,7 +25,7 @@ struct SendFileHeader {
 };
 
 struct SendFileTrailer {
-    uint64_t checksum;
+    std::string checksum;
 
     template <class X>
     void visit(X& x) {

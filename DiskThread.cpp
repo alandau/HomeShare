@@ -129,6 +129,7 @@ void DiskThread::DoWriteLoopImpl(Map::iterator iter) {
                 //CloseSocket(s);
                 return;
             }
+            item.hash.update(buffer->writeData(), count);
             buffer->adjustWritePos(count);
             progressMap_[c].doneBytes += count;
             MaybeSendProgressUpdate(c);
@@ -142,7 +143,7 @@ void DiskThread::DoWriteLoopImpl(Map::iterator iter) {
 
     if (item.state == QueueItem::State::SEND_TRAILER) {
         SendFileTrailer trailer;
-        trailer.checksum = 12345;
+        trailer.checksum = item.hash.result();
         Buffer::UniquePtr buffer = Serializer().serialize(trailer);
         // Ignore possible corking, since this is the last buffer
         progressMap_[c].doneFiles++;
@@ -200,13 +201,18 @@ void DiskThread::OnMessageReceived(const Contact& c, Buffer::UniquePtr message) 
 
         data.hReceiveFile = hFile;
         data.receiveFilename = filename;
+        data.receivedCount = 0;
+        data.receiveSize = fileHeader.size;
+        data.hash.reset();
         data.state = ReceiveData::State::RECEIVE_DATA_OR_TRAILER;
     } else if (data.state == ReceiveData::State::RECEIVE_DATA_OR_TRAILER) {
         if (header.type == SENDFILE_DATA) {
+            data.hash.update(message->readData(), message->readSize());
+            data.receivedCount += message->readSize();
             while (message->readSize() != 0) {
                 DWORD count;
                 if (!WriteFile(data.hReceiveFile, message->readData(), message->readSize(), &count, NULL)) {
-                    log.e(L"Error writing to file being received");
+                    log.e(L"Error writing to file being received '{}'", data.receiveFilename);
                     CloseHandle(data.hReceiveFile);
                     data.hReceiveFile = NULL;
                     return;
@@ -214,23 +220,31 @@ void DiskThread::OnMessageReceived(const Contact& c, Buffer::UniquePtr message) 
                 message->adjustReadPos(count);
             }
         } else if (header.type == SENDFILE_TRAILER) {
+            CloseHandle(data.hReceiveFile);
+            data.hReceiveFile = NULL;
             SendFileTrailer fileTrailer;
             if (!Serializer().deserialize(fileTrailer, message.get())) {
                 log.e(L"Can't deserialize SendfileTrailer");
-                CloseHandle(data.hReceiveFile);
-                data.hReceiveFile = NULL;
                 return;
             }
-            log.i(L"Finished receiving file, checksum = {}", fileTrailer.checksum);
-            CloseHandle(data.hReceiveFile);
-            data.hReceiveFile = NULL;
-            // The move will fail if the destination file exists, and the .part file will live on.
-            // This is better than overwriting an existing file
-            MoveFile((data.receiveFilename + L".part").c_str(), data.receiveFilename.c_str());
+            std::string dataHash = data.hash.result();
+            if (data.receivedCount != data.receiveSize) {
+                log.e(L"Bad size for file '{}', expected {}, received {} bytes",
+                    data.receiveFilename, data.receiveSize, data.receivedCount);
+            } else if (dataHash != fileTrailer.checksum) {
+                log.e(L"Corrupt file '{}', expected hash {}, actual {}",
+                    data.receiveFilename, keyToDisplayStr(fileTrailer.checksum), keyToDisplayStr(dataHash));
+            } else {
+                log.i(L"Finished receiving file '{}', checksum OK", data.receiveFilename);
+                // The move will fail if the destination file exists, and the .part file will live on.
+                // This is better than overwriting an existing file
+                MoveFile((data.receiveFilename + L".part").c_str(), data.receiveFilename.c_str());
+            }
             data.state = ReceiveData::State::RECEIVE_HEADER;
         } else {
             log.e(L"Expected type SENDFILE_DATA or SENDFILE_TRAILER, got {}", header.type);
             CloseHandle(data.hReceiveFile);
+            data.hReceiveFile = NULL;
             return;
         }
     }
