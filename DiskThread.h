@@ -21,18 +21,29 @@ class DiskThread : public MessageThread {
 public:
     DiskThread(Logger* logger, SocketThreadApi* socketThread, const std::wstring& receivePath);
     void Enqueue(const Contact& c, const std::wstring& filename);
+    void Enqueue(const Contact& c, const std::wstring& dir, const std::vector<std::wstring>& files);
     void setProgressUpdateCb(std::function<void(const Contact& c, const ProgressUpdate& up)> cb);
 
 private:
     enum { MAX_BUFFERS_TO_SEND = 10 };
     struct QueueItem {
-        enum class State { SEND_HEADER, SEND_DATA, SEND_TRAILER };
-        QueueItem(const Contact& c, const std::wstring& filename)
+        enum class State { SEND_HEADER, SEND_DATA, SEND_TRAILER, SEND_FILE_LIST_HEADER };
+        QueueItem(const Contact& c, const std::wstring& filename, bool dontUpdateSizes = false)
             : c(c)
             , filename(filename)
+            , dontUpdateSizes(dontUpdateSizes)
+        {}
+        QueueItem(const Contact& c, uint32_t count, uint64_t size)
+            : c(c)
+            , count(count)
+            , size(size)
+            , state(State::SEND_FILE_LIST_HEADER)
         {}
         Contact c;
         std::wstring filename;
+        bool dontUpdateSizes;
+        uint32_t count;     // only used by SEND_FILE_LIST_HEADER
+        uint64_t size;      // file size for 1 file, total size for SEND_FILE_LIST_HEADER
         State state = State::SEND_HEADER;
         HANDLE hFile = NULL;
         GenericHash hash;

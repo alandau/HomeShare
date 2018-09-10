@@ -46,6 +46,53 @@ void DiskThread::Enqueue(const Contact& c, const std::wstring& filename) {
     });
 }
 
+void DiskThread::Enqueue(const Contact& c, const std::wstring& dir, const std::vector<std::wstring>& files) {
+    RunInThread([this, c, dir, files] {
+        bool callDoWriteLoop = false;
+        SendData* sendData;
+        if (paused_.find(c) != paused_.end()) {
+            sendData = paused_[c].get();
+        } else if (corked_.find(c) != corked_.end()) {
+            sendData = corked_[c].get();
+        } else {
+            if (uncorked_.find(c) == uncorked_.end()) {
+                uncorked_[c] = std::make_unique<SendData>();
+            }
+            sendData = uncorked_[c].get();
+            callDoWriteLoop = true;
+        }
+
+        uint32_t count = files.size();
+        uint64_t size = 0;
+        for (const std::wstring& name : files) {
+            std::wstring filename = dir + L"\\" + name;
+            HANDLE hFile = CreateFile(filename.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+
+            if (hFile == INVALID_HANDLE_VALUE) {
+                log.e(L"Can't open file {}", filename);
+                continue;
+            }
+            LARGE_INTEGER liSize;
+            GetFileSizeEx(hFile, &liSize);
+            CloseHandle(hFile);
+
+            size += liSize.QuadPart;
+        }
+        sendData->queue_.emplace_back(c, count, size);
+        for (const std::wstring& name : files) {
+            std::wstring filename = dir + L"\\" + name;
+            sendData->queue_.emplace_back(c, std::move(filename), true);
+        }
+
+        log.i(L"Enqueued {} files, {} bytes", count, size);
+
+        if (callDoWriteLoop) {
+            DoWriteLoop();
+        }
+    });
+}
+
 void DiskThread::setProgressUpdateCb(std::function<void(const Contact& c, const ProgressUpdate& up)> cb) {
     progressUpdateCb_ = std::move(cb);
 }
@@ -73,6 +120,21 @@ void DiskThread::DoWriteLoopImpl(Map::iterator iter) {
     const Contact& c = iter->first;
     QueueItem& item = queue.front();
 
+    if (item.state == QueueItem::State::SEND_FILE_LIST_HEADER) {
+        SendFileListHeader header;
+        header.count = item.count;
+        header.size = item.size;
+        Buffer::UniquePtr buffer = Serializer().serialize(header);
+        SendBufferToContact(c, SENDFILE_LIST, std::move(buffer));
+
+        progressMap_[c].totalBytes += item.size;
+        progressMap_[c].totalFiles += item.count;
+        MaybeSendProgressUpdate(c, true);
+
+        queue.pop_front();
+        return;
+    }
+
     if (item.state == QueueItem::State::SEND_HEADER) {
         HANDLE hFile = CreateFile(item.filename.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
             NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, NULL);
@@ -89,9 +151,11 @@ void DiskThread::DoWriteLoopImpl(Map::iterator iter) {
         LARGE_INTEGER size;
         GetFileSizeEx(hFile, &size);
 
-        progressMap_[c].totalBytes += size.QuadPart;
-        progressMap_[c].totalFiles++;
-        MaybeSendProgressUpdate(c, true);
+        if (!item.dontUpdateSizes) {
+            progressMap_[c].totalBytes += size.QuadPart;
+            progressMap_[c].totalFiles++;
+            MaybeSendProgressUpdate(c, true);
+        }
 
 
         SendFileHeader header;
@@ -168,8 +232,6 @@ bool DiskThread::SendBufferToContact(const Contact& c, MessageType type, Buffer:
 }
 
 void DiskThread::OnMessageReceived(const Contact& c, Buffer::UniquePtr message) {
-    ReceiveData& data = receive_[c];
-
     Header header;
     memcpy(&header, message->buffer(), sizeof(header));
     message->adjustReadPos(sizeof(header));
@@ -178,7 +240,19 @@ void DiskThread::OnMessageReceived(const Contact& c, Buffer::UniquePtr message) 
         log.e(L"Bad streamId {}", header.streamId);
         return;
     }
+
+    ReceiveData& data = receive_[c];
     if (data.state == ReceiveData::State::RECEIVE_HEADER) {
+        if (header.type == SENDFILE_LIST) {
+            SendFileListHeader fileListHeader;
+            if (!Serializer().deserialize(fileListHeader, message.get())) {
+                log.e(L"Can't deserialize SendFileListHeader");
+                return;
+            }
+            log.i(L"Going to receive {} files, {} bytes", fileListHeader.count, fileListHeader.size);
+            return;
+        }
+
         if (header.type != SENDFILE_HEADER) {
             log.e(L"Expected type SENDFILE_HEADER, got {}", header.type);
             return;
