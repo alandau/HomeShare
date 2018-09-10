@@ -10,11 +10,16 @@
 #include <memory>
 
 struct ProgressUpdate {
+    struct Stats {
+        uint64_t doneBytes = 0;
+        uint64_t totalBytes = 0;
+        uint32_t doneFiles = 0;
+        uint32_t totalFiles = 0;
+    };
+
     std::chrono::steady_clock::time_point timestamp;
-    uint64_t doneBytes = 0;
-    uint64_t totalBytes = 0;
-    uint32_t doneFiles = 0;
-    uint32_t totalFiles = 0;
+    Stats send;
+    Stats recv;
 };
 
 class DiskThread : public MessageThread {
@@ -61,8 +66,6 @@ private:
         std::wstring receiveFilename;
         uint32_t filelistCount = 0;
         uint32_t filelistCountDone = 0;
-        uint64_t filelistSize = 0;
-        uint64_t filelistSizeDone = 0;
         std::wstring receiveDir;
     };
     using Map = std::unordered_map<Contact, std::unique_ptr<SendData>>;

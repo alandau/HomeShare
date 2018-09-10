@@ -292,8 +292,23 @@ LRESULT RootWindow::OnCreate()
 
     lvc.mask = LVCF_TEXT | LVCF_WIDTH;
     lvc.cx = 100;
-    lvc.pszText = TEXT("Speed");
+    lvc.pszText = TEXT("Send Speed");
     ListView_InsertColumn(contactView_, 4, &lvc);
+
+    lvc.mask = LVCF_TEXT | LVCF_WIDTH;
+    lvc.cx = 100;
+    lvc.pszText = TEXT("Receive Files");
+    ListView_InsertColumn(contactView_, 5, &lvc);
+
+    lvc.mask = LVCF_TEXT | LVCF_WIDTH;
+    lvc.cx = 150;
+    lvc.pszText = TEXT("Receive Bytes");
+    ListView_InsertColumn(contactView_, 6, &lvc);
+
+    lvc.mask = LVCF_TEXT | LVCF_WIDTH;
+    lvc.cx = 100;
+    lvc.pszText = TEXT("Receive Speed");
+    ListView_InsertColumn(contactView_, 7, &lvc);
 
     logger_.reset(new ListViewLogger(this, logView_));
 
@@ -489,6 +504,32 @@ void RootWindow::OnGetDispInfo(NMLVDISPINFO* pnmv) {
     }
     ContactData& data = contactData_[index];
 
+    auto getStat = [](int col,
+        std::chrono::steady_clock::time_point prevTimestamp, std::chrono::steady_clock::time_point timestamp,
+        const ProgressUpdate::Stats& prevStats, const ProgressUpdate::Stats& stats) {
+        
+        switch (col) {
+        case 0:
+            return fmt::format(L"{} / {}", stats.doneFiles, stats.totalFiles);
+        case 1:
+            return formatSize(stats.doneBytes, stats.totalBytes);
+        case 2: {
+            if (prevTimestamp == std::chrono::steady_clock::time_point()) {
+                // First progress, ignore
+                return std::wstring();
+            } else {
+                using float_seconds = std::chrono::duration<double>;
+                uint64_t diffBytes = stats.doneBytes - prevStats.doneBytes;
+                std::chrono::steady_clock::duration diffTime = timestamp - prevTimestamp;
+                double speed = diffBytes / float_seconds(diffTime).count();
+                return formatSpeed(speed);
+            }
+            break;
+        }
+        }
+        return std::wstring();
+    };
+
     if (pnmv->item.mask & LVIF_TEXT) {
         switch (pnmv->item.iSubItem) {
         case 0: 
@@ -500,28 +541,18 @@ void RootWindow::OnGetDispInfo(NMLVDISPINFO* pnmv) {
                 data.dyn.connectState == ContactData::ConnectState::Disconnected ? L"Disconnected" :
                 data.dyn.connectState == ContactData::ConnectState::Connecting ? L"Connecting" : L"";
             break;
-        case 2: {
-            std::wstring res = fmt::format(L"{} / {}", data.dyn.progress.doneFiles, data.dyn.progress.totalFiles);
-            lstrcpyn(pnmv->item.pszText, res.c_str(), pnmv->item.cchTextMax);
+        case 2: case 3: case 4: {
+            std::wstring text = getStat(pnmv->item.iSubItem - 2,
+                data.dyn.prevProgress.timestamp, data.dyn.progress.timestamp,
+                data.dyn.prevProgress.send, data.dyn.progress.send);
+            lstrcpyn(pnmv->item.pszText, text.c_str(), pnmv->item.cchTextMax);
             break;
         }
-        case 3: {
-            std::wstring res = formatSize(data.dyn.progress.doneBytes, data.dyn.progress.totalBytes);
-            lstrcpyn(pnmv->item.pszText, res.c_str(), pnmv->item.cchTextMax);
-            break;
-        }
-        case 4: {
-            if (data.dyn.prevProgress.timestamp == std::chrono::steady_clock::time_point()) {
-                // First progress, ignore
-                pnmv->item.pszText[0] = L'\0';
-            } else {
-                using float_seconds = std::chrono::duration<double>;
-                uint64_t diffBytes = data.dyn.progress.doneBytes - data.dyn.prevProgress.doneBytes;
-                std::chrono::steady_clock::duration diffTime = data.dyn.progress.timestamp - data.dyn.prevProgress.timestamp;
-                double speed = diffBytes / float_seconds(diffTime).count();
-                std::wstring res = formatSpeed(speed);
-                lstrcpyn(pnmv->item.pszText, res.c_str(), pnmv->item.cchTextMax);
-            }
+        case 5: case 6: case 7: {
+            std::wstring text = getStat(pnmv->item.iSubItem - 5,
+                data.dyn.prevProgress.timestamp, data.dyn.progress.timestamp,
+                data.dyn.prevProgress.recv, data.dyn.progress.recv);
+            lstrcpyn(pnmv->item.pszText, text.c_str(), pnmv->item.cchTextMax);
             break;
         }
         }

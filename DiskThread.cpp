@@ -127,8 +127,8 @@ void DiskThread::DoWriteLoopImpl(Map::iterator iter) {
         Buffer::UniquePtr buffer = Serializer().serialize(header);
         SendBufferToContact(c, SENDFILE_LIST, std::move(buffer));
 
-        progressMap_[c].totalBytes += item.size;
-        progressMap_[c].totalFiles += item.count;
+        progressMap_[c].send.totalBytes += item.size;
+        progressMap_[c].send.totalFiles += item.count;
         MaybeSendProgressUpdate(c, true);
 
         queue.pop_front();
@@ -152,8 +152,8 @@ void DiskThread::DoWriteLoopImpl(Map::iterator iter) {
         GetFileSizeEx(hFile, &size);
 
         if (!item.dontUpdateSizes) {
-            progressMap_[c].totalBytes += size.QuadPart;
-            progressMap_[c].totalFiles++;
+            progressMap_[c].send.totalBytes += size.QuadPart;
+            progressMap_[c].send.totalFiles++;
             MaybeSendProgressUpdate(c, true);
         }
 
@@ -195,7 +195,7 @@ void DiskThread::DoWriteLoopImpl(Map::iterator iter) {
             }
             item.hash.update(buffer->writeData(), count);
             buffer->adjustWritePos(count);
-            progressMap_[c].doneBytes += count;
+            progressMap_[c].send.doneBytes += count;
             MaybeSendProgressUpdate(c);
             bool shouldCork = SendBufferToContact(c, SENDFILE_DATA, std::move(buffer));
             numBuffers++;
@@ -210,7 +210,7 @@ void DiskThread::DoWriteLoopImpl(Map::iterator iter) {
         trailer.checksum = item.hash.result();
         Buffer::UniquePtr buffer = Serializer().serialize(trailer);
         // Ignore possible corking, since this is the last buffer
-        progressMap_[c].doneFiles++;
+        progressMap_[c].send.doneFiles++;
         MaybeSendProgressUpdate(c, true);
         SendBufferToContact(c, SENDFILE_TRAILER, std::move(buffer));
         queue.pop_front();
@@ -252,9 +252,11 @@ void DiskThread::OnMessageReceived(const Contact& c, Buffer::UniquePtr message) 
             if (fileListHeader.count > 0) {
                 data.receiveDir = makeReceiveDir();
                 data.filelistCount = fileListHeader.count;
-                data.filelistSize = fileListHeader.size;
                 data.filelistCountDone = 0;
-                data.filelistSizeDone = 0;
+                ProgressUpdate::Stats& stats = progressMap_[c].recv;
+                stats.totalFiles += fileListHeader.count;
+                stats.totalBytes += fileListHeader.size;
+                MaybeSendProgressUpdate(c, true);
                 log.i(L"Going to receive {} files, {} bytes", fileListHeader.count, fileListHeader.size);
             }
             return;
@@ -275,7 +277,10 @@ void DiskThread::OnMessageReceived(const Contact& c, Buffer::UniquePtr message) 
         if (data.filelistCountDone == data.filelistCount) {
             data.receiveDir.clear();
             data.filelistCount++;
-            data.filelistSize += fileHeader.size;
+            ProgressUpdate::Stats& stats = progressMap_[c].recv;
+            stats.totalFiles++;
+            stats.totalBytes += fileHeader.size;
+            MaybeSendProgressUpdate(c, true);
         }
 
         std::wstring filename;
@@ -296,7 +301,7 @@ void DiskThread::OnMessageReceived(const Contact& c, Buffer::UniquePtr message) 
         if (header.type == SENDFILE_DATA) {
             data.hash.update(message->readData(), message->readSize());
             data.receivedCount += message->readSize();
-            data.filelistSizeDone += message->readSize();
+            progressMap_[c].recv.doneBytes += message->readSize();
             while (message->readSize() != 0) {
                 DWORD count;
                 if (!WriteFile(data.hReceiveFile, message->readData(), message->readSize(), &count, NULL)) {
@@ -307,6 +312,7 @@ void DiskThread::OnMessageReceived(const Contact& c, Buffer::UniquePtr message) 
                 }
                 message->adjustReadPos(count);
             }
+            MaybeSendProgressUpdate(c);
         } else if (header.type == SENDFILE_TRAILER) {
             CloseHandle(data.hReceiveFile);
             data.hReceiveFile = NULL;
@@ -332,6 +338,8 @@ void DiskThread::OnMessageReceived(const Contact& c, Buffer::UniquePtr message) 
             if (data.filelistCountDone == data.filelistCount) {
                 data.receiveDir.clear();
             }
+            progressMap_[c].recv.doneFiles++;
+            MaybeSendProgressUpdate(c, true);
             data.state = ReceiveData::State::RECEIVE_HEADER;
         } else {
             log.e(L"Expected type SENDFILE_DATA or SENDFILE_TRAILER, got {}", header.type);
