@@ -615,14 +615,15 @@ LRESULT RootWindow::HandleMessage(UINT uMsg, WPARAM wParam, LPARAM lParam)
 
 void RootWindow::SelectAndSendFile(const ContactData& contactData)
 {
-    std::unique_ptr<wchar_t[]> filenames(new wchar_t[1024*1024]);
+    enum { SIZE = 1024 * 1024 };
+    std::unique_ptr<wchar_t[]> filenames(new wchar_t[SIZE]);
     filenames[0] = L'\0';
     OPENFILENAME ofn = { 0 };
     ofn.lStructSize = sizeof(ofn);
     ofn.hwndOwner = GetHWND();
     ofn.lpstrFilter = L"All Files (*.*)\0*.*\0";
     ofn.lpstrFile = filenames.get();
-    ofn.nMaxFile = sizeof(filenames) / sizeof(filenames[0]);
+    ofn.nMaxFile = SIZE;
     ofn.lpstrTitle = L"Select file(s) to send";
     ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_EXPLORER | OFN_ALLOWMULTISELECT;
 

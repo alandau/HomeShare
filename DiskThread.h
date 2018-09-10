@@ -59,6 +59,11 @@ private:
         uint64_t receiveSize;
         GenericHash hash;
         std::wstring receiveFilename;
+        uint32_t filelistCount = 0;
+        uint32_t filelistCountDone = 0;
+        uint64_t filelistSize = 0;
+        uint64_t filelistSizeDone = 0;
+        std::wstring receiveDir;
     };
     using Map = std::unordered_map<Contact, std::unique_ptr<SendData>>;
 
@@ -67,7 +72,8 @@ private:
     bool SendBufferToContact(const Contact& c, MessageType type, Buffer::UniquePtr buffer);
     void OnMessageReceived(const Contact& c, Buffer::UniquePtr message);
 
-    HANDLE GetReceiveFile(const std::wstring& origFilename, std::wstring& filename);
+    HANDLE GetReceiveFile(const std::wstring receiveDir, const std::wstring& origFilename, std::wstring& filename);
+    std::wstring makeReceiveDir();
 
     void MaybeSendProgressUpdate(const Contact& c, bool force = false);
 

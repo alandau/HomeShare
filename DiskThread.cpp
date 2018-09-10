@@ -249,7 +249,14 @@ void DiskThread::OnMessageReceived(const Contact& c, Buffer::UniquePtr message) 
                 log.e(L"Can't deserialize SendFileListHeader");
                 return;
             }
-            log.i(L"Going to receive {} files, {} bytes", fileListHeader.count, fileListHeader.size);
+            if (fileListHeader.count > 0) {
+                data.receiveDir = makeReceiveDir();
+                data.filelistCount = fileListHeader.count;
+                data.filelistSize = fileListHeader.size;
+                data.filelistCountDone = 0;
+                data.filelistSizeDone = 0;
+                log.i(L"Going to receive {} files, {} bytes", fileListHeader.count, fileListHeader.size);
+            }
             return;
         }
 
@@ -265,8 +272,14 @@ void DiskThread::OnMessageReceived(const Contact& c, Buffer::UniquePtr message) 
         std::wstring origFilename = Utf8ToUtf16(fileHeader.name);
         log.i(L"Receiving file '{}' of size {}", origFilename, fileHeader.size);
 
+        if (data.filelistCountDone == data.filelistCount) {
+            data.receiveDir.clear();
+            data.filelistCount++;
+            data.filelistSize += fileHeader.size;
+        }
+
         std::wstring filename;
-        HANDLE hFile = GetReceiveFile(origFilename, filename);
+        HANDLE hFile = GetReceiveFile(data.receiveDir, origFilename, filename);
 
         if (hFile == INVALID_HANDLE_VALUE) {
             log.e(L"Can't create file {}", origFilename);
@@ -283,6 +296,7 @@ void DiskThread::OnMessageReceived(const Contact& c, Buffer::UniquePtr message) 
         if (header.type == SENDFILE_DATA) {
             data.hash.update(message->readData(), message->readSize());
             data.receivedCount += message->readSize();
+            data.filelistSizeDone += message->readSize();
             while (message->readSize() != 0) {
                 DWORD count;
                 if (!WriteFile(data.hReceiveFile, message->readData(), message->readSize(), &count, NULL)) {
@@ -298,7 +312,7 @@ void DiskThread::OnMessageReceived(const Contact& c, Buffer::UniquePtr message) 
             data.hReceiveFile = NULL;
             SendFileTrailer fileTrailer;
             if (!Serializer().deserialize(fileTrailer, message.get())) {
-                log.e(L"Can't deserialize SendfileTrailer");
+                log.e(L"Can't deserialize SendFileTrailer");
                 return;
             }
             std::string dataHash = data.hash.result();
@@ -314,6 +328,10 @@ void DiskThread::OnMessageReceived(const Contact& c, Buffer::UniquePtr message) 
                 // This is better than overwriting an existing file
                 MoveFile((data.receiveFilename + L".part").c_str(), data.receiveFilename.c_str());
             }
+            data.filelistCountDone++;
+            if (data.filelistCountDone == data.filelistCount) {
+                data.receiveDir.clear();
+            }
             data.state = ReceiveData::State::RECEIVE_HEADER;
         } else {
             log.e(L"Expected type SENDFILE_DATA or SENDFILE_TRAILER, got {}", header.type);
@@ -325,7 +343,7 @@ void DiskThread::OnMessageReceived(const Contact& c, Buffer::UniquePtr message) 
 
 }
 
-HANDLE DiskThread::GetReceiveFile(const std::wstring& origFilename, std::wstring& filename) {
+HANDLE DiskThread::GetReceiveFile(const std::wstring receiveDir, const std::wstring& origFilename, std::wstring& filename) {
     if (origFilename.find_first_of(L"\\:") != std::wstring::npos) {
         return INVALID_HANDLE_VALUE;
     }
@@ -339,7 +357,7 @@ HANDLE DiskThread::GetReceiveFile(const std::wstring& origFilename, std::wstring
                 tempFilename = tempFilename.substr(0, dotPos) + L"-" + std::to_wstring(i) + tempFilename.substr(dotPos);
             }
         }
-        std::wstring candidateFilename = receivePath_ + L"\\" + tempFilename;
+        std::wstring candidateFilename = (receiveDir.empty() ? receivePath_ : receiveDir) + L"\\" + tempFilename;
         std::wstring candidateFilenamePart = candidateFilename + L".part";
 
         HANDLE hFile = CreateFile(candidateFilename.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
@@ -360,6 +378,27 @@ HANDLE DiskThread::GetReceiveFile(const std::wstring& origFilename, std::wstring
         return hPartFile;
     }
     return INVALID_HANDLE_VALUE;
+}
+
+std::wstring DiskThread::makeReceiveDir() {
+    auto now = std::chrono::system_clock::now();
+    std::time_t t = std::chrono::system_clock::to_time_t(now);
+    struct tm tm;
+    localtime_s(&tm, &t);
+    std::wstring timeStr = fmt::format(L"{}-{:02}-{:02} {:02}-{:02}-{:02}",
+        tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+        tm.tm_hour, tm.tm_min, tm.tm_sec);
+
+    std::wstring prefix = receivePath_ + L"\\" + timeStr;
+
+    for (int i = 0; i < 20; i++) {
+        std::wstring path = i == 0 ? prefix : fmt::format(L"{}-{}", prefix, i);
+        if (CreateDirectory(path.c_str(), NULL)) {
+            return path;
+        }
+    }
+
+    return L"";
 }
 
 void DiskThread::MaybeSendProgressUpdate(const Contact& c, bool force) {
