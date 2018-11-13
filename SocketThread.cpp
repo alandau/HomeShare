@@ -288,7 +288,7 @@ void SocketThread::OnRead(SOCKET s) {
     if (data.messageLenLen < 4) {
         // First read the message length
         while (data.messageLenLen < 4) {
-            int count = recv(s, (char*)&data.messageLen, 4 - data.messageLenLen, 0);
+            int count = recv(s, (char*)&data.messageLen + data.messageLenLen, 4 - data.messageLenLen, 0);
             if (count < 0) {
                 int err;
                 if ((err = WSAGetLastError()) == WSAEWOULDBLOCK) {
