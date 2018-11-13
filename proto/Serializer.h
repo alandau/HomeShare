@@ -142,8 +142,8 @@ private:
     void readImpl(std::string& v) {
         uint32_t size;
         readImpl(size);
-        v.resize(size);
         b->ensureHasReadData(size);
+        v.resize(size);
         memcpy(&v[0], b->readData(), size);
         b->adjustReadPos(size);
     }
