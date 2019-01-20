@@ -107,7 +107,8 @@ std::vector<Database::Contact> Database::GetContacts() {
     while (res == SQLITE_ROW) {
         Contact c;
         c.id = sqlite3_column_int(stmt.get(), 0);
-        c.pubkey = (const char *)sqlite3_column_text(stmt.get(), 1);
+        const char* buf = (const char *)sqlite3_column_blob(stmt.get(), 1);
+        c.pubkey.assign(buf, sqlite3_column_bytes(stmt.get(), 1));
         c.name = (const wchar_t *)sqlite3_column_text16(stmt.get(), 2);
         const char* host = (const char *)sqlite3_column_text(stmt.get(), 3);
         c.host = host ? host : "";
