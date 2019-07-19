@@ -438,6 +438,8 @@ LRESULT RootWindow::OnNotify(NMHDR *pnm) {
             AppendMenu(hMenu, MF_STRING | (!conn ? MF_GRAYED : 0), 3, L"Send File");
             if (!data.stat.known) {
                 AppendMenu(hMenu, MF_STRING, 4, L"Add to contacts");
+            } else {
+                AppendMenu(hMenu, MF_STRING, 5, L"Properties");
             }
             POINT p;
             GetCursorPos(&p);
@@ -463,6 +465,47 @@ LRESULT RootWindow::OnNotify(NMHDR *pnm) {
                 break;
             case 4:
                 AddToContacts(data);
+                break;
+            case 5:
+                struct Values {
+                    std::wstring name;
+                    std::string key;
+                };
+                Values values;
+                values.name = data.stat.displayName;
+                values.key = data.stat.c.pubkey;
+                INT_PTR ok_pressed = DialogBoxParam(g_hinst, MAKEINTRESOURCE(IDD_CONTACT_PROPS), GetHWND(),
+                    [](HWND hDlg, UINT msg, WPARAM wParam, LPARAM lParam) -> INT_PTR {
+                    switch (msg) {
+                    case WM_INITDIALOG: {
+                        Values* v = (Values*)lParam;
+                        SetWindowLongPtr(hDlg, DWLP_USER, (LONG_PTR)v);
+                        SetDlgItemText(hDlg, IDC_NAME_EDIT, v->name.c_str());
+                        SetDlgItemText(hDlg, IDC_KEY_EDIT, keyToDisplayStr(v->key).c_str());
+                        return TRUE;
+                    }
+                    case WM_COMMAND:
+                        switch (LOWORD(wParam)) {
+                        case IDOK: {
+                            Values* v = (Values*)GetWindowLongPtr(hDlg, DWLP_USER);
+                            wchar_t buf[100];
+                            GetDlgItemText(hDlg, IDC_NAME_EDIT, buf, sizeof(buf) / sizeof(buf[0]));
+                            v->name.assign(buf);
+                            EndDialog(hDlg, 1);
+                            return TRUE;
+                        }
+                        case IDCANCEL:
+                            EndDialog(hDlg, 0);
+                            return TRUE;
+
+                        }
+                    }
+                    return FALSE;
+                }, (LPARAM)&values);
+                if (ok_pressed) {
+                    db_->UpdateContactName(values.key, values.name);
+                    LoadContactsFromDb();
+                }
                 break;
             }
             break;

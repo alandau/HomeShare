@@ -127,3 +127,13 @@ void Database::AddContact(const std::string& pubkey, const std::wstring& name) {
         log.e(L"Can't add contact: {}", res);
     }
 }
+
+void Database::UpdateContactName(std::string pubkey, const std::wstring& name) {
+    Stmt stmt = createStatement("UPDATE contacts SET name=? WHERE pubkey=?");
+    sqlite3_bind_text16(stmt.get(), 1, name.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_blob(stmt.get(), 2, pubkey.data(), pubkey.size(), SQLITE_STATIC);
+    int res = sqlite3_step(stmt.get());
+    if (res != SQLITE_DONE) {
+        log.e(L"Can't add contact: {}", res);
+    }
+}

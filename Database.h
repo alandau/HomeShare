@@ -21,6 +21,7 @@ public:
     void GetKeys(std::string* pub, std::string* priv);
     std::vector<Contact> GetContacts();
     void AddContact(const std::string& pubkey, const std::wstring& name);
+    void UpdateContactName(std::string pubkey, const std::wstring& name);
 private:
     class Stmt {
     public:
