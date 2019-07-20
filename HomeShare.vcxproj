@@ -147,7 +147,10 @@
     <ClCompile Include="DiscoveryThread.cpp" />
     <ClCompile Include="DiskThread.cpp" />
     <ClCompile Include="HomeShare.cpp" />
-    <ClCompile Include="lib\sqlite3.c" />
+    <ClCompile Include="lib\sqlite3.c">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">MinSpace</Optimization>
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Release|x64'">MinSpace</Optimization>
+    </ClCompile>
     <ClCompile Include="lib\win\MessageThread.cpp" />
     <ClCompile Include="lib\win\window.cpp" />
     <ClCompile Include="SocketThread.cpp" />
