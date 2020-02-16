@@ -36,6 +36,7 @@ MessageThread::MessageThread()
 {}
 
 MessageThread::~MessageThread() {
+    CloseHandle(readyEvent_);
     if (!thread_.joinable()) {
         return;
     }
@@ -46,7 +47,9 @@ MessageThread::~MessageThread() {
 }
 
 void MessageThread::Start() {
+    readyEvent_ = CreateEvent(NULL, FALSE, FALSE, NULL);
     thread_ = std::thread([this] { Loop(); });
+    WaitForSingleObject(readyEvent_, INFINITE);
 }
 
 void MessageThread::RunInThread(std::function<void(void)> func) {
@@ -65,6 +68,8 @@ void MessageThread::Loop() {
     win_ = MessageWindow::Create(this);
 
     InitInThread();
+
+    SetEvent(readyEvent_);
 
     MSG msg;
     while (GetMessage(&msg, NULL, 0, 0)) {

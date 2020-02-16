@@ -24,4 +24,5 @@ private:
     class MessageWindow;
     std::thread thread_;
     MessageWindow* win_;
+    HANDLE readyEvent_;
 };

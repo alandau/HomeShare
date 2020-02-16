@@ -411,6 +411,8 @@ LRESULT RootWindow::OnCreate()
         });
     });
     discoveryThread_->Start();
+
+    discoveryThread_->StartDiscovery();
     return 0;
 }
 
