@@ -17,6 +17,8 @@ void DiscoveryThread::InitInThread() {
     WSADATA wsd;
     WSAStartup(MAKEWORD(2, 2), &wsd);
 
+    notificationSocket_ = socket(AF_INET, SOCK_DGRAM, 0);
+    WSAAsyncSelect(notificationSocket_, GetHWND(), WM_SOCKET, FD_ADDRESS_LIST_CHANGE);
     CreateSockets();
 }
 
@@ -139,6 +141,9 @@ void DiscoveryThread::onSocketEvent(SOCKET sock, int event, int error) {
     case FD_WRITE:
         OnWrite(sock);
         break;
+    case FD_ADDRESS_LIST_CHANGE:
+        CreateSockets();
+        break;
     }
 }
 
@@ -164,6 +169,9 @@ void DiscoveryThread::CreateSockets() {
         closesocket(socketitem.first);
     }
     sockets_.clear();
+
+    DWORD dw;
+    WSAIoctl(notificationSocket_, SIO_ADDRESS_LIST_CHANGE, NULL, 0, NULL, 0, &dw, NULL, NULL);
 
     ULONG flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER;
     ULONG size = 10 * 1024;

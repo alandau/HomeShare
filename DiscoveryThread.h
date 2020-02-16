@@ -20,6 +20,7 @@ public:
         , pubkey_(pubkey)
     {}
     ~DiscoveryThread() {
+        closesocket(notificationSocket_);
         for (const auto& si : sockets_) {
             closesocket(si.first);
         }
@@ -48,6 +49,7 @@ private:
     std::unordered_map<SOCKET, SocketData> sockets_;
     std::function<void(const std::vector<DiscoveryResult>& result)> resultCb_;
     std::vector<DiscoveryResult> discoveryResults_;
+    SOCKET notificationSocket_;
 
     void onSocketEvent(SOCKET sock, int event, int error);
     void OnRead(SOCKET s);
