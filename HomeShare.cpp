@@ -161,6 +161,7 @@ private:
     std::unique_ptr<DiscoveryThread> discoveryThread_;
 
     void SelectAndSendFile(const ContactData& contactData);
+    void HandleDroppedFiles(HDROP hDrop);
     int GetContactIndex(const Contact& c);
     bool GetContactHostAndPort(const ContactData& c, std::string* hostname = nullptr, uint16_t* port = nullptr);
     void LoadContactsFromDb();
@@ -338,6 +339,11 @@ LRESULT RootWindow::OnCreate()
                 : ContactData::ConnectState::Disconnected;
             ListView_RedrawItems(contactView_, index, index);
             UpdateWindow(contactView_);
+
+            // Accept dropped files if exactly 1 contact is connected
+            size_t numConnected = std::count_if(contactData_.begin(), contactData_.end(),
+                [](const ContactData& c) { return c.dyn.connectState == ContactData::ConnectState::Connected; });
+            DragAcceptFiles(GetHWND(), numConnected == 1);
         });
     });
     socketThread_->setIsKnownContact([this](const std::string& pubkey) {
@@ -684,6 +690,10 @@ LRESULT RootWindow::HandleMessage(UINT uMsg, WPARAM wParam, LPARAM lParam)
             break;
         }
         return 0;
+
+    case WM_DROPFILES:
+        HandleDroppedFiles((HDROP)wParam);
+        return 0;
     }
 
     return Window::HandleMessage(uMsg, wParam, lParam);
@@ -719,6 +729,105 @@ void RootWindow::SelectAndSendFile(const ContactData& contactData)
             // One file selected
             diskThread_->Enqueue(contactData.stat.c, filenames.get());
         }
+    }
+}
+
+void RootWindow::HandleDroppedFiles(HDROP hDrop) {
+    SCOPE_EXIT {
+        DragFinish(hDrop);
+    };
+
+    UINT numFiles = DragQueryFile(hDrop, ~0U, NULL, 0);
+    if (numFiles == 0) {
+        return;
+    }
+
+    wchar_t filename[MAX_PATH];
+    if (!DragQueryFile(hDrop, 0, filename, MAX_PATH)) {
+        return;
+    }
+
+    std::wstring dir;
+    std::vector<std::wstring> files;
+
+    DWORD attr = GetFileAttributes(filename);
+    if (attr == -1) {
+        logger_->e(L"Can't get file attributes: {}", filename);
+        return;
+    }
+    if (attr & FILE_ATTRIBUTE_DIRECTORY) {
+        if (numFiles > 1) {
+            logger_->e(L"Can only transfer a single directory");
+            return;
+        }
+        dir = filename;
+
+        // Enumerate all files in dir
+        WIN32_FIND_DATA ffd;
+        HANDLE hFind = FindFirstFile((dir + L"\\*").c_str(), &ffd);
+        if (hFind == INVALID_HANDLE_VALUE) {
+            logger_->e(L"Error listing directory: {}", dir);
+            return;
+        }
+        SCOPE_EXIT{
+            FindClose(hFind);
+        };
+        do {
+            if (ffd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+                if (ffd.cFileName[0] == L'.' &&
+                    (ffd.cFileName[1] == L'\0' || (ffd.cFileName[1] == L'.' && ffd.cFileName[2] == L'\0'))) {
+                    continue;
+                }
+                logger_->e(L"Can't handle subdirectories: {}", ffd.cFileName);
+                return;
+            } else {
+                files.push_back(ffd.cFileName);
+            }
+        } while (FindNextFile(hFind, &ffd) != 0);
+    } else {
+        dir = filename;
+        size_t index = dir.rfind(L'\\');
+        if (index == std::wstring::npos) {
+            logger_->e(L"Filename isn't a full path: {}", filename);
+            return;
+        }
+        files.push_back(dir.substr(index + 1));
+        dir = dir.substr(0, index);
+
+        // Verify that all files are in dir
+        for (size_t i = 1; i < numFiles; i++) {
+            if (!DragQueryFile(hDrop, i, filename, MAX_PATH)) {
+                return;
+            }
+            wchar_t* pos = wcsrchr(filename, L'\\');
+            if (pos == nullptr) {
+                logger_->e(L"Filename isn't a full path: {}", filename);
+                return;
+            }
+            if (dir.compare(0, dir.size(), filename, pos - filename) != 0) {
+                logger_->e(L"All files need to be in the same directory");
+                return;
+            }
+            files.push_back(std::wstring(pos + 1));
+        }
+    }
+
+    // Find active contact
+    auto filter = [](const ContactData& c) { return c.dyn.connectState == ContactData::ConnectState::Connected; };
+    size_t numConnected = std::count_if(contactData_.begin(), contactData_.end(), filter);
+    if (numConnected != 1) {
+        logger_->e(L"Can't drag&drop files when number of connected contacts ({}) is not 1", numConnected);
+        return;
+    }
+    const ContactData& c = *std::find_if(contactData_.begin(), contactData_.end(), filter);
+
+    // Send files
+    if (files.size() == 0) {
+        logger_->e(L"No files to send");
+    } else if (files.size() == 1) {
+        diskThread_->Enqueue(c.stat.c, dir + L"\\" + files[0]);
+    } else {
+        diskThread_->Enqueue(c.stat.c, dir, files);
     }
 }
 
