@@ -37,6 +37,7 @@ void DiscoveryThread::SendAll(const QueueItem& item) {
 void DiscoveryThread::StartDiscovery() {
     RunInThread([this] {
         discoveryResults_.clear();
+        discoveryAux_.clear();
 
         Buffer::UniquePtr buf(Buffer::create(sizeof(uint32_t)));
         uint32_t magic = DISCOVERY_REQ_MAGIC;
@@ -118,11 +119,15 @@ void DiscoveryThread::OnRead(SOCKET s) {
     } else if (magic == DISCOVERY_RESP_MAGIC) {
         DiscoveryResp resp;
         if (Serializer().deserialize(resp, data.get())) {
-            DiscoveryResult res;
-            res.pubkey = resp.pubkey;
-            res.host = resp.ip;
-            res.port = resp.port;
-            discoveryResults_.push_back(std::move(res));
+            auto it = discoveryAux_.find(resp.pubkey);
+            if (it == discoveryAux_.end() || it->second > sockets_[s].metric) {
+                DiscoveryResult res;
+                res.pubkey = resp.pubkey;
+                res.host = resp.ip;
+                res.port = resp.port;
+                discoveryResults_.push_back(std::move(res));
+                discoveryAux_[resp.pubkey] = sockets_[s].metric;
+            }
         }
     } else {
         log.d(L"Received bad discovery magic 0x{:08x}", magic);
@@ -159,6 +164,7 @@ std::optional<LRESULT> DiscoveryThread::HandleMessage(UINT uMsg, WPARAM wParam, 
         KillTimer(GetHWND(), 1);
         resultCb_(discoveryResults_);
         discoveryResults_.clear();
+        discoveryAux_.clear();
         return (LRESULT)0;
     }
     return std::nullopt;
@@ -201,6 +207,11 @@ void DiscoveryThread::CreateSockets() {
         setsockopt(s, SOL_SOCKET, SO_BROADCAST, (const char *)&val, sizeof(val));
         memcpy(&data.localAddr, p->FirstUnicastAddress->Address.lpSockaddr, sizeof(data.localAddr));
         data.localAddr.sin_port = htons(PORT);
+        if (p->Length >= sizeof(IP_ADAPTER_ADDRESSES_LH)) {
+            data.metric = ((IP_ADAPTER_ADDRESSES_LH*)p)->Ipv4Metric;
+        } else {
+            data.metric = 0;
+        }
         if (bind(s, (sockaddr *)&data.localAddr, sizeof(data.localAddr)) < 0) {
             log.e(L"Bind to {}:{} failed, discovery may not work correctly. Error {}",
                 Utf8ToUtf16(sockaddr_to_str(*(sockaddr *)&data.localAddr)), PORT, errstr(WSAGetLastError()));

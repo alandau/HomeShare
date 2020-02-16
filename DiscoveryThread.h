@@ -41,6 +41,7 @@ private:
     };
     struct SocketData {
         sockaddr_in localAddr;
+        uint32_t metric;
         std::deque<QueueItem> queue;
     };
 
@@ -49,6 +50,7 @@ private:
     std::unordered_map<SOCKET, SocketData> sockets_;
     std::function<void(const std::vector<DiscoveryResult>& result)> resultCb_;
     std::vector<DiscoveryResult> discoveryResults_;
+    std::unordered_map<std::string, uint32_t> discoveryAux_;
     SOCKET notificationSocket_;
 
     void onSocketEvent(SOCKET sock, int event, int error);

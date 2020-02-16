@@ -389,7 +389,7 @@ LRESULT RootWindow::OnCreate()
     discoveryThread_.reset(new DiscoveryThread(*logger_, pub));
     discoveryThread_->setOnResult([this](const std::vector<DiscoveryThread::DiscoveryResult>& result) {
         RunInThread([this, result] {
-            contactData_.erase(std::remove_if(contactData_.begin(), contactData_.end(), [this](const ContactData& c) {
+            contactData_.erase(std::remove_if(contactData_.begin(), contactData_.end(), [](const ContactData& c) {
                 return !c.stat.known;
             }), contactData_.end());
             for (ContactData& c : contactData_) {
