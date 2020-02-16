@@ -2,6 +2,7 @@
 #include "proto/discovery.h"
 #include "lib/win/encoding.h"
 #include <iphlpapi.h>
+#include <map>
 
 enum { PORT = 8891 };
 
@@ -179,7 +180,7 @@ void DiscoveryThread::CreateSockets() {
     DWORD dw;
     WSAIoctl(notificationSocket_, SIO_ADDRESS_LIST_CHANGE, NULL, 0, NULL, 0, &dw, NULL, NULL);
 
-    ULONG flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER;
+    ULONG flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER | GAA_FLAG_INCLUDE_PREFIX;
     ULONG size = 10 * 1024;
     std::vector<uint8_t> buf(size);
     ULONG res = GetAdaptersAddresses(AF_INET, flags, nullptr, (IP_ADAPTER_ADDRESSES *)&buf[0], &size);
@@ -192,6 +193,9 @@ void DiscoveryThread::CreateSockets() {
         return;
     }
 
+    // map ip,prefix length -> bind ip, metric
+    std::map<std::pair<uint32_t, uint32_t>, std::pair<sockaddr_in, uint32_t>> prefixToAddr;
+
     IP_ADAPTER_ADDRESSES *p = (IP_ADAPTER_ADDRESSES *)&buf[0];
     for (; p; p = p->Next) {
         if (p->OperStatus != IfOperStatusUp) {
@@ -200,18 +204,32 @@ void DiscoveryThread::CreateSockets() {
         if (!p->FirstUnicastAddress) {
             continue;
         }
- 
+
+        uint32_t metric;
+        if (p->Length >= sizeof(IP_ADAPTER_ADDRESSES_LH)) {
+            metric = ((IP_ADAPTER_ADDRESSES_LH*)p)->Ipv4Metric;
+        } else {
+            metric = 0;
+        }
+
+        uint32_t netaddr = ((sockaddr_in*)p->FirstPrefix->Address.lpSockaddr)->sin_addr.s_addr;
+        uint32_t prefixLen = p->FirstPrefix->PrefixLength;
+        auto it = prefixToAddr.find(std::make_pair(netaddr, prefixLen));
+        if (it == prefixToAddr.end() || metric < it->second.second) {
+            sockaddr_in bindAddr;
+            memcpy(&bindAddr, p->FirstUnicastAddress->Address.lpSockaddr, sizeof(bindAddr));
+            prefixToAddr[std::make_pair(netaddr, prefixLen)] = std::make_pair(bindAddr, metric);
+        }
+    }
+
+    for (const auto& prefixes : prefixToAddr) {
         SOCKET s = socket(AF_INET, SOCK_DGRAM, 0);
         SocketData& data = sockets_[s];
         int val = 1;
         setsockopt(s, SOL_SOCKET, SO_BROADCAST, (const char *)&val, sizeof(val));
-        memcpy(&data.localAddr, p->FirstUnicastAddress->Address.lpSockaddr, sizeof(data.localAddr));
+        memcpy(&data.localAddr, &prefixes.second.first, sizeof(data.localAddr));
         data.localAddr.sin_port = htons(PORT);
-        if (p->Length >= sizeof(IP_ADAPTER_ADDRESSES_LH)) {
-            data.metric = ((IP_ADAPTER_ADDRESSES_LH*)p)->Ipv4Metric;
-        } else {
-            data.metric = 0;
-        }
+        data.metric = prefixes.second.second;
         if (bind(s, (sockaddr *)&data.localAddr, sizeof(data.localAddr)) < 0) {
             log.e(L"Bind to {}:{} failed, discovery may not work correctly. Error {}",
                 Utf8ToUtf16(sockaddr_to_str(*(sockaddr *)&data.localAddr)), PORT, errstr(WSAGetLastError()));
