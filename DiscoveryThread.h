@@ -13,6 +13,7 @@ public:
         std::string pubkey;
         std::string host;
         uint16_t port;
+        std::wstring ifaceName;
     };
 
     DiscoveryThread(Logger& logger, const std::string& pubkey)
@@ -42,6 +43,7 @@ private:
     struct SocketData {
         sockaddr_in localAddr;
         uint32_t metric;
+        std::wstring ifaceName;
         std::deque<QueueItem> queue;
     };
 

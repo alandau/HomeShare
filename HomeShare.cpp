@@ -131,6 +131,7 @@ struct ContactData {
     struct {
         std::string host;
         uint16_t port;
+        std::wstring ifaceName;
         ConnectState connectState = ConnectState::Disconnected;
         ProgressUpdate prevProgress, progress;
     } dyn;
@@ -278,38 +279,43 @@ LRESULT RootWindow::OnCreate()
     
     lvc.mask = LVCF_TEXT | LVCF_WIDTH;
     lvc.cx = 150;
-    lvc.pszText = TEXT("State");
+    lvc.pszText = TEXT("IP Address");
     ListView_InsertColumn(contactView_, 1, &lvc);
+
+    lvc.mask = LVCF_TEXT | LVCF_WIDTH;
+    lvc.cx = 150;
+    lvc.pszText = TEXT("State");
+    ListView_InsertColumn(contactView_, 2, &lvc);
 
     lvc.mask = LVCF_TEXT | LVCF_WIDTH;
     lvc.cx = 100;
     lvc.pszText = TEXT("Sent Files");
-    ListView_InsertColumn(contactView_, 2, &lvc);
+    ListView_InsertColumn(contactView_, 3, &lvc);
 
     lvc.mask = LVCF_TEXT | LVCF_WIDTH;
     lvc.cx = 150;
     lvc.pszText = TEXT("Sent Bytes");
-    ListView_InsertColumn(contactView_, 3, &lvc);
-
-    lvc.mask = LVCF_TEXT | LVCF_WIDTH;
-    lvc.cx = 100;
-    lvc.pszText = TEXT("Send Speed");
     ListView_InsertColumn(contactView_, 4, &lvc);
 
     lvc.mask = LVCF_TEXT | LVCF_WIDTH;
     lvc.cx = 100;
-    lvc.pszText = TEXT("Receive Files");
+    lvc.pszText = TEXT("Send Speed");
     ListView_InsertColumn(contactView_, 5, &lvc);
+
+    lvc.mask = LVCF_TEXT | LVCF_WIDTH;
+    lvc.cx = 100;
+    lvc.pszText = TEXT("Receive Files");
+    ListView_InsertColumn(contactView_, 6, &lvc);
 
     lvc.mask = LVCF_TEXT | LVCF_WIDTH;
     lvc.cx = 150;
     lvc.pszText = TEXT("Receive Bytes");
-    ListView_InsertColumn(contactView_, 6, &lvc);
+    ListView_InsertColumn(contactView_, 7, &lvc);
 
     lvc.mask = LVCF_TEXT | LVCF_WIDTH;
     lvc.cx = 100;
     lvc.pszText = TEXT("Receive Speed");
-    ListView_InsertColumn(contactView_, 7, &lvc);
+    ListView_InsertColumn(contactView_, 8, &lvc);
 
     logger_.reset(new ListViewLogger(this, logView_));
 
@@ -402,12 +408,14 @@ LRESULT RootWindow::OnCreate()
                     ContactData& c = contactData_[index];
                     c.dyn.host = r.host;
                     c.dyn.port = r.port;
+                    c.dyn.ifaceName = r.ifaceName;
                 } else {
                     ContactData c;
                     c.stat.c.pubkey = r.pubkey;
                     c.stat.displayName = Utf8ToUtf16(fmt::format("{}:{}", r.host, r.port));
                     c.dyn.host = r.host;
                     c.dyn.port = r.port;
+                    c.dyn.ifaceName = r.ifaceName;
                     contactData_.push_back(std::move(c));
                 }
             }
@@ -443,7 +451,7 @@ LRESULT RootWindow::OnNotify(NMHDR *pnm) {
             HMENU hMenu = CreatePopupMenu();
             AppendMenu(hMenu, MF_STRING | (conn ? MF_GRAYED : 0), 1, L"Connect");
             AppendMenu(hMenu, MF_STRING | (!conn ? MF_GRAYED : 0), 2, L"Disconnect");
-            AppendMenu(hMenu, MF_STRING | (!conn ? MF_GRAYED : 0), 3, L"Send File");
+            AppendMenu(hMenu, MF_STRING | (!conn ? MF_GRAYED : 0), 3, L"Send File(s)");
             if (!data.stat.known) {
                 AppendMenu(hMenu, MF_STRING, 4, L"Add to contacts");
             } else {
@@ -586,21 +594,38 @@ void RootWindow::OnGetDispInfo(NMLVDISPINFO* pnmv) {
         case 0: 
             pnmv->item.pszText = const_cast<LPWSTR>(data.stat.displayName.c_str());
             break;
-        case 1:
+        case 1: {
+            std::string host;
+            uint16_t port;
+            if (!GetContactHostAndPort(data, &host, &port)) {
+                pnmv->item.pszText = L"";
+                break;
+            }
+            std::wstring text = Utf8ToUtf16(host);
+            if (port != 8890) {
+                text += fmt::format(L":{}", port);
+            }
+            if (!data.dyn.ifaceName.empty()) {
+                text += fmt::format(L" ({})", data.dyn.ifaceName);
+            }
+            lstrcpyn(pnmv->item.pszText, text.c_str(), pnmv->item.cchTextMax);
+            break;
+        }
+        case 2:
             pnmv->item.pszText =
                 data.dyn.connectState == ContactData::ConnectState::Connected ? L"Connected" :
                 data.dyn.connectState == ContactData::ConnectState::Disconnected ? L"Disconnected" :
                 data.dyn.connectState == ContactData::ConnectState::Connecting ? L"Connecting" : L"";
             break;
-        case 2: case 3: case 4: {
-            std::wstring text = getStat(pnmv->item.iSubItem - 2,
+        case 3: case 4: case 5: {
+            std::wstring text = getStat(pnmv->item.iSubItem - 3,
                 data.dyn.prevProgress.timestamp, data.dyn.progress.timestamp,
                 data.dyn.prevProgress.send, data.dyn.progress.send);
             lstrcpyn(pnmv->item.pszText, text.c_str(), pnmv->item.cchTextMax);
             break;
         }
-        case 5: case 6: case 7: {
-            std::wstring text = getStat(pnmv->item.iSubItem - 5,
+        case 6: case 7: case 8: {
+            std::wstring text = getStat(pnmv->item.iSubItem - 6,
                 data.dyn.prevProgress.timestamp, data.dyn.progress.timestamp,
                 data.dyn.prevProgress.recv, data.dyn.progress.recv);
             lstrcpyn(pnmv->item.pszText, text.c_str(), pnmv->item.cchTextMax);

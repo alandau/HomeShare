@@ -126,6 +126,7 @@ void DiscoveryThread::OnRead(SOCKET s) {
                 res.pubkey = resp.pubkey;
                 res.host = resp.ip;
                 res.port = resp.port;
+                res.ifaceName = sockets_[s].ifaceName;
                 discoveryResults_.push_back(std::move(res));
                 discoveryAux_[resp.pubkey] = sockets_[s].metric;
             }
@@ -193,8 +194,13 @@ void DiscoveryThread::CreateSockets() {
         return;
     }
 
-    // map ip,prefix length -> bind ip, metric
-    std::map<std::pair<uint32_t, uint32_t>, std::pair<sockaddr_in, uint32_t>> prefixToAddr;
+    // map ip,prefix length -> bind ip, metric, ifaceName
+    struct PrefixData {
+        sockaddr_in addr;
+        uint32_t metric;
+        std::wstring ifaceName;
+    };
+    std::map<std::pair<uint32_t, uint32_t>, PrefixData> prefixToAddr;
 
     IP_ADAPTER_ADDRESSES *p = (IP_ADAPTER_ADDRESSES *)&buf[0];
     for (; p; p = p->Next) {
@@ -215,21 +221,22 @@ void DiscoveryThread::CreateSockets() {
         uint32_t netaddr = ((sockaddr_in*)p->FirstPrefix->Address.lpSockaddr)->sin_addr.s_addr;
         uint32_t prefixLen = p->FirstPrefix->PrefixLength;
         auto it = prefixToAddr.find(std::make_pair(netaddr, prefixLen));
-        if (it == prefixToAddr.end() || metric < it->second.second) {
+        if (it == prefixToAddr.end() || metric < it->second.metric) {
             sockaddr_in bindAddr;
             memcpy(&bindAddr, p->FirstUnicastAddress->Address.lpSockaddr, sizeof(bindAddr));
-            prefixToAddr[std::make_pair(netaddr, prefixLen)] = std::make_pair(bindAddr, metric);
+            prefixToAddr[std::make_pair(netaddr, prefixLen)] = PrefixData{ bindAddr, metric, p->FriendlyName };
         }
     }
 
-    for (const auto& prefixes : prefixToAddr) {
+    for (const auto& prefix : prefixToAddr) {
         SOCKET s = socket(AF_INET, SOCK_DGRAM, 0);
         SocketData& data = sockets_[s];
         int val = 1;
         setsockopt(s, SOL_SOCKET, SO_BROADCAST, (const char *)&val, sizeof(val));
-        memcpy(&data.localAddr, &prefixes.second.first, sizeof(data.localAddr));
+        memcpy(&data.localAddr, &prefix.second.addr, sizeof(data.localAddr));
         data.localAddr.sin_port = htons(PORT);
-        data.metric = prefixes.second.second;
+        data.metric = prefix.second.metric;
+        data.ifaceName = prefix.second.ifaceName;
         if (bind(s, (sockaddr *)&data.localAddr, sizeof(data.localAddr)) < 0) {
             log.e(L"Bind to {}:{} failed, discovery may not work correctly. Error {}",
                 Utf8ToUtf16(sockaddr_to_str(*(sockaddr *)&data.localAddr)), PORT, errstr(WSAGetLastError()));
