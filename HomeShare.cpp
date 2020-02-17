@@ -236,13 +236,15 @@ LRESULT RootWindow::OnCreate()
 
     LVCOLUMN lvc;
 
+    const int PADDING = 20;
+
     lvc.mask = LVCF_TEXT | LVCF_WIDTH;
-    lvc.cx = 100;
+    lvc.cx = GetSystemMetrics(SM_CXSMICON) + ListView_GetStringWidth(logView_, L"Warning") + PADDING;
     lvc.pszText = TEXT("Level");
     ListView_InsertColumn(logView_, 0, &lvc);
 
     lvc.mask = LVCF_TEXT | LVCF_WIDTH;
-    lvc.cx = 200;
+    lvc.cx = ListView_GetStringWidth(logView_, L"2020-02-02 20:20:20.200") + PADDING;
     lvc.pszText = TEXT("Time");
     ListView_InsertColumn(logView_, 1, &lvc);
 
@@ -273,48 +275,51 @@ LRESULT RootWindow::OnCreate()
         LVS_EX_FULLROWSELECT, LVS_EX_FULLROWSELECT);
 
     lvc.mask = LVCF_TEXT | LVCF_WIDTH;
-    lvc.cx = 300;
+    lvc.cx = ListView_GetStringWidth(contactView_, L"Demo Long Contact 1234") + PADDING;
     lvc.pszText = TEXT("Contact");
     ListView_InsertColumn(contactView_, 0, &lvc);
     
     lvc.mask = LVCF_TEXT | LVCF_WIDTH;
-    lvc.cx = 150;
+    lvc.cx = ListView_GetStringWidth(contactView_, L"192.168.123.234 (Ethernet)") + PADDING;
     lvc.pszText = TEXT("IP Address");
     ListView_InsertColumn(contactView_, 1, &lvc);
 
     lvc.mask = LVCF_TEXT | LVCF_WIDTH;
-    lvc.cx = 150;
+    lvc.cx = ListView_GetStringWidth(contactView_, L"Disconnected") + PADDING;
     lvc.pszText = TEXT("State");
     ListView_InsertColumn(contactView_, 2, &lvc);
 
+    int widthFiles = max(ListView_GetStringWidth(contactView_, L"Tx Files"), ListView_GetStringWidth(contactView_, L"234 / 234"));
     lvc.mask = LVCF_TEXT | LVCF_WIDTH;
-    lvc.cx = 100;
-    lvc.pszText = TEXT("Sent Files");
+    lvc.cx = widthFiles + PADDING;
+    lvc.pszText = TEXT("Tx Files");
     ListView_InsertColumn(contactView_, 3, &lvc);
 
+    int widthBytes = max(ListView_GetStringWidth(contactView_, L"Tx Bytes"), ListView_GetStringWidth(contactView_, L"234.45 / 234.45 GB"));
     lvc.mask = LVCF_TEXT | LVCF_WIDTH;
-    lvc.cx = 150;
-    lvc.pszText = TEXT("Sent Bytes");
+    lvc.cx = widthBytes + PADDING;
+    lvc.pszText = TEXT("Tx Bytes");
     ListView_InsertColumn(contactView_, 4, &lvc);
 
+    int widthSpeed = max(ListView_GetStringWidth(contactView_, L"Tx Speed"), ListView_GetStringWidth(contactView_, L"234.45 GB/s"));
     lvc.mask = LVCF_TEXT | LVCF_WIDTH;
-    lvc.cx = 100;
-    lvc.pszText = TEXT("Send Speed");
+    lvc.cx = widthSpeed + PADDING;
+    lvc.pszText = TEXT("Tx Speed");
     ListView_InsertColumn(contactView_, 5, &lvc);
 
     lvc.mask = LVCF_TEXT | LVCF_WIDTH;
-    lvc.cx = 100;
-    lvc.pszText = TEXT("Receive Files");
+    lvc.cx = widthFiles + PADDING;
+    lvc.pszText = TEXT("Rx Files");
     ListView_InsertColumn(contactView_, 6, &lvc);
 
     lvc.mask = LVCF_TEXT | LVCF_WIDTH;
-    lvc.cx = 150;
-    lvc.pszText = TEXT("Receive Bytes");
+    lvc.cx = widthBytes + PADDING;
+    lvc.pszText = TEXT("Rx Bytes");
     ListView_InsertColumn(contactView_, 7, &lvc);
 
     lvc.mask = LVCF_TEXT | LVCF_WIDTH;
-    lvc.cx = 100;
-    lvc.pszText = TEXT("Receive Speed");
+    lvc.cx = widthSpeed + PADDING;
+    lvc.pszText = TEXT("Rx Speed");
     ListView_InsertColumn(contactView_, 8, &lvc);
 
     logger_.reset(new ListViewLogger(this, logView_));
@@ -695,6 +700,7 @@ LRESULT RootWindow::HandleMessage(UINT uMsg, WPARAM wParam, LPARAM lParam)
         }
         if (logView_) {
             SetWindowPos(logView_, NULL, 0, cy / 2, cx, cy - cy / 2, SWP_NOZORDER | SWP_NOACTIVATE);
+            ListView_SetColumnWidth(logView_, 2, LVSCW_AUTOSIZE_USEHEADER);
         }
         return 0;
     }
