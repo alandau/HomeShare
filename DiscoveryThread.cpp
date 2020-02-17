@@ -228,6 +228,7 @@ void DiscoveryThread::CreateSockets() {
         }
     }
 
+    std::wstring logMessage;
     for (const auto& prefix : prefixToAddr) {
         SOCKET s = socket(AF_INET, SOCK_DGRAM, 0);
         SocketData& data = sockets_[s];
@@ -242,5 +243,15 @@ void DiscoveryThread::CreateSockets() {
                 Utf8ToUtf16(sockaddr_to_str(*(sockaddr *)&data.localAddr)), PORT, errstr(WSAGetLastError()));
         }
         WSAAsyncSelect(s, GetHWND(), WM_SOCKET, FD_WRITE | FD_READ);
+
+        logMessage += Utf8ToUtf16(sockaddr_to_str(*(sockaddr *)&data.localAddr));
+        if (!data.ifaceName.empty()) {
+            logMessage += L" (" + data.ifaceName + L")";
+        }
+        logMessage += L", ";
     }
+    if (logMessage.size() >= 2) {
+        logMessage.resize(logMessage.size() - 2);
+    }
+    log.i(L"Listening on {}", logMessage);
 }
