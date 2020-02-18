@@ -218,8 +218,18 @@ void DiscoveryThread::CreateSockets() {
             metric = 0;
         }
 
-        uint32_t netaddr = ((sockaddr_in*)p->FirstPrefix->Address.lpSockaddr)->sin_addr.s_addr;
-        uint32_t prefixLen = p->FirstPrefix->PrefixLength;
+        uint32_t netaddr, prefixLen;
+        if (p->FirstPrefix) {
+            // Vista and up
+            netaddr = ((sockaddr_in*)p->FirstPrefix->Address.lpSockaddr)->sin_addr.s_addr;
+            prefixLen = p->FirstPrefix->PrefixLength;
+        } else {
+            // On XP, sometimes p->FirstPrefix == NULL. If so, ignore it and use the IP address.
+            // Since all addresses are different, the result is that we don't filter out any
+            // interfaces.
+            netaddr = ((sockaddr_in*)p->FirstUnicastAddress->Address.lpSockaddr)->sin_addr.s_addr;
+            prefixLen = 0;
+        }
         auto it = prefixToAddr.find(std::make_pair(netaddr, prefixLen));
         if (it == prefixToAddr.end() || metric < it->second.metric) {
             sockaddr_in bindAddr;
