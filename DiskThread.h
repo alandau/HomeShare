@@ -33,9 +33,10 @@ private:
     enum { MAX_BUFFERS_TO_SEND = 10 };
     struct QueueItem {
         enum class State { SEND_HEADER, SEND_DATA, SEND_TRAILER, SEND_FILE_LIST_HEADER };
-        QueueItem(const Contact& c, const std::wstring& filename, bool dontUpdateSizes = false)
+        QueueItem(const Contact& c, const std::wstring& filename, const std::wstring& relativeFilename, bool dontUpdateSizes = false)
             : c(c)
             , filename(filename)
+            , relativeFilename(relativeFilename)
             , dontUpdateSizes(dontUpdateSizes)
         {}
         QueueItem(const Contact& c, uint32_t count, uint64_t size)
@@ -46,6 +47,7 @@ private:
         {}
         Contact c;
         std::wstring filename;
+        std::wstring relativeFilename;
         bool dontUpdateSizes;
         uint32_t count;     // only used by SEND_FILE_LIST_HEADER
         uint64_t size;      // file size for 1 file, total size for SEND_FILE_LIST_HEADER

@@ -162,6 +162,7 @@ private:
     std::unique_ptr<DiscoveryThread> discoveryThread_;
 
     void SelectAndSendFile(const ContactData& contactData);
+    bool TreeWalk(const std::wstring& root, const std::wstring& fileOrDir, std::vector<std::wstring>& files);
     void HandleDroppedFiles(HDROP hDrop);
     int GetContactIndex(const Contact& c);
     bool GetContactHostAndPort(const ContactData& c, std::string* hostname = nullptr, uint16_t* port = nullptr);
@@ -763,6 +764,55 @@ void RootWindow::SelectAndSendFile(const ContactData& contactData)
     }
 }
 
+bool RootWindow::TreeWalk(const std::wstring& root, const std::wstring& filename, std::vector<std::wstring>& files) {
+    std::wstring prefix;
+    if (filename != root) {
+        if (!(filename.compare(0, root.size(), root) == 0 && filename.size() >= root.size() + 1 && filename[root.size()] == L'\\')) {
+            logger_->e(L"All files need to be in the same directory or subdirectories");
+            return false;
+        }
+        prefix = filename.substr(root.size() + 1);
+    }
+
+    DWORD attr = GetFileAttributes(filename.c_str());
+    if (attr == -1) {
+        logger_->e(L"Can't get file attributes: {}", filename);
+        return false;
+    }
+
+    // Regular file
+    if (!(attr & FILE_ATTRIBUTE_DIRECTORY)) {
+        files.push_back(prefix);
+        return true;
+    }
+
+    // Directory, enumerate all files in dir
+    WIN32_FIND_DATA ffd;
+    HANDLE hFind = FindFirstFile((filename + L"\\*").c_str(), &ffd);
+    if (hFind == INVALID_HANDLE_VALUE) {
+        logger_->e(L"Error listing directory: {}", filename);
+        return false;
+    }
+    SCOPE_EXIT {
+        FindClose(hFind);
+    };
+    do {
+        if (ffd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            if (ffd.cFileName[0] == L'.' &&
+                (ffd.cFileName[1] == L'\0' || (ffd.cFileName[1] == L'.' && ffd.cFileName[2] == L'\0'))) {
+                continue;
+            }
+            if (!TreeWalk(root, filename + L"\\" + ffd.cFileName, files)) {
+                return false;
+            }
+        } else {
+            files.push_back(prefix + (prefix.empty() ? L"" : L"\\") + ffd.cFileName);
+        }
+    } while (FindNextFile(hFind, &ffd) != 0);
+
+    return true;
+}
+
 void RootWindow::HandleDroppedFiles(HDROP hDrop) {
     SCOPE_EXIT {
         DragFinish(hDrop);
@@ -777,8 +827,13 @@ void RootWindow::HandleDroppedFiles(HDROP hDrop) {
     if (!DragQueryFile(hDrop, 0, filename, MAX_PATH)) {
         return;
     }
+    wchar_t* pos = wcsrchr(filename, L'\\');
+    if (pos == nullptr) {
+        logger_->e(L"Filename isn't a full path: {}", filename);
+        return;
+    }
+    std::wstring dir = std::wstring(filename, pos - filename);
 
-    std::wstring dir;
     std::vector<std::wstring> files;
 
     DWORD attr = GetFileAttributes(filename);
@@ -786,60 +841,22 @@ void RootWindow::HandleDroppedFiles(HDROP hDrop) {
         logger_->e(L"Can't get file attributes: {}", filename);
         return;
     }
-    if (attr & FILE_ATTRIBUTE_DIRECTORY) {
-        if (numFiles > 1) {
-            logger_->e(L"Can only transfer a single directory");
-            return;
-        }
-        dir = filename;
 
-        // Enumerate all files in dir
-        WIN32_FIND_DATA ffd;
-        HANDLE hFind = FindFirstFile((dir + L"\\*").c_str(), &ffd);
-        if (hFind == INVALID_HANDLE_VALUE) {
-            logger_->e(L"Error listing directory: {}", dir);
+    if (numFiles == 1 && (attr & FILE_ATTRIBUTE_DIRECTORY)) {
+        // A single directory is its own root
+        dir = filename;
+        if (!TreeWalk(dir, filename, files)) {
             return;
         }
-        SCOPE_EXIT{
-            FindClose(hFind);
-        };
-        do {
-            if (ffd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-                if (ffd.cFileName[0] == L'.' &&
-                    (ffd.cFileName[1] == L'\0' || (ffd.cFileName[1] == L'.' && ffd.cFileName[2] == L'\0'))) {
-                    continue;
-                }
-                logger_->e(L"Can't handle subdirectories: {}", ffd.cFileName);
-                return;
-            } else {
-                files.push_back(ffd.cFileName);
-            }
-        } while (FindNextFile(hFind, &ffd) != 0);
     } else {
-        dir = filename;
-        size_t index = dir.rfind(L'\\');
-        if (index == std::wstring::npos) {
-            logger_->e(L"Filename isn't a full path: {}", filename);
-            return;
-        }
-        files.push_back(dir.substr(index + 1));
-        dir = dir.substr(0, index);
-
-        // Verify that all files are in dir
-        for (size_t i = 1; i < numFiles; i++) {
+        // Multiple files or directories have a common root "dir"
+        for (size_t i = 0; i < numFiles; i++) {
             if (!DragQueryFile(hDrop, i, filename, MAX_PATH)) {
                 return;
             }
-            wchar_t* pos = wcsrchr(filename, L'\\');
-            if (pos == nullptr) {
-                logger_->e(L"Filename isn't a full path: {}", filename);
+            if (!TreeWalk(dir, filename, files)) {
                 return;
             }
-            if (dir.compare(0, dir.size(), filename, pos - filename) != 0) {
-                logger_->e(L"All files need to be in the same directory");
-                return;
-            }
-            files.push_back(std::wstring(pos + 1));
         }
     }
 

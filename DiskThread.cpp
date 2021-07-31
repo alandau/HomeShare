@@ -3,6 +3,7 @@
 #include "proto/Serializer.h"
 #include "lib/win/encoding.h"
 #include "lib/win/raii.h"
+#include <ShlObj.h>
 
 DiskThread::DiskThread(Logger* logger, SocketThreadApi* socketThread, const std::wstring& receivePath)
     : log(*logger)
@@ -32,15 +33,17 @@ DiskThread::DiskThread(Logger* logger, SocketThreadApi* socketThread, const std:
 void DiskThread::Enqueue(const Contact& c, const std::wstring& filename) {
     RunInThread([this, c, filename] {
         log.i(L"Enqueued file '{}'", filename);
+        size_t index = filename.rfind(L'\\');
+        std::wstring relativeFilename = index == std::wstring::npos ? filename : filename.substr(index + 1);
         if (paused_.find(c) != paused_.end()) {
-            paused_[c]->queue_.emplace_back(c, filename);
+            paused_[c]->queue_.emplace_back(c, filename, relativeFilename);
         } else if (corked_.find(c) != corked_.end()) {
-            corked_[c]->queue_.emplace_back(c, filename);
+            corked_[c]->queue_.emplace_back(c, filename, relativeFilename);
         } else {
             if (uncorked_.find(c) == uncorked_.end()) {
                 uncorked_[c] = std::make_unique<SendData>();
             }
-            uncorked_[c]->queue_.emplace_back(c, filename);
+            uncorked_[c]->queue_.emplace_back(c, filename, relativeFilename);
             DoWriteLoop();
         }
     });
@@ -82,7 +85,7 @@ void DiskThread::Enqueue(const Contact& c, const std::wstring& dir, const std::v
         sendData->queue_.emplace_back(c, count, size);
         for (const std::wstring& name : files) {
             std::wstring filename = dir + L"\\" + name;
-            sendData->queue_.emplace_back(c, std::move(filename), true);
+            sendData->queue_.emplace_back(c, std::move(filename), name, true);
         }
 
         log.i(L"Enqueued {} files, {} bytes", count, size);
@@ -114,7 +117,7 @@ void DiskThread::DoWriteLoopImpl(Map::iterator iter) {
         uncorked_.erase(iter);
         return;
     }
-    SCOPE_EXIT {
+    SCOPE_EXIT{
         DoWriteLoop();
     };
     const Contact& c = iter->first;
@@ -159,11 +162,7 @@ void DiskThread::DoWriteLoopImpl(Map::iterator iter) {
 
 
         SendFileHeader header;
-        header.name = Utf16ToUtf8(item.filename);
-        size_t backslash = header.name.rfind('\\');
-        if (backslash != std::string::npos) {
-            header.name = header.name.substr(backslash + 1);
-        }
+        header.name = Utf16ToUtf8(item.relativeFilename);
         header.size = size.QuadPart;
         Buffer::UniquePtr buffer = Serializer().serialize(header);
         if (SendBufferToContact(c, SENDFILE_HEADER, std::move(buffer))) {
@@ -352,8 +351,16 @@ void DiskThread::OnMessageReceived(const Contact& c, Buffer::UniquePtr message) 
 }
 
 HANDLE DiskThread::GetReceiveFile(const std::wstring receiveDir, const std::wstring& origFilename, std::wstring& filename) {
-    if (origFilename.find_first_of(L"\\:") != std::wstring::npos) {
+    if (origFilename.empty() || origFilename.find(L':') != std::wstring::npos || origFilename[0] == L'\\') {
         return INVALID_HANDLE_VALUE;
+    }
+    size_t index = origFilename.rfind(L'\\');
+    if (index != std::wstring::npos) {
+        std::wstring dirToMake = receiveDir + L"\\" + origFilename.substr(0, index);
+        int error = SHCreateDirectory(NULL, dirToMake.c_str());
+        if (error != ERROR_SUCCESS && error != ERROR_ALREADY_EXISTS) {
+            return INVALID_HANDLE_VALUE;
+        }
     }
     for (int i = 0; i < 20; i++) {
         std::wstring tempFilename = origFilename;
