@@ -17,6 +17,8 @@
 #include <shlobj.h>
 #include <shellapi.h>
 
+#define HOMESHARE_VERSION_STRING L"v0.3"
+
 static std::wstring GetDesktopPath() {
     wchar_t path[MAX_PATH];
     if (FAILED(SHGetFolderPath(NULL, CSIDL_DESKTOPDIRECTORY, NULL, SHGFP_TYPE_CURRENT, path))) {
@@ -723,8 +725,11 @@ LRESULT RootWindow::HandleMessage(UINT uMsg, WPARAM wParam, LPARAM lParam)
 
     case WM_COMMAND:
         switch (GET_WM_COMMAND_ID(wParam, lParam)) {
-        case ID_FILE_SENDFILE:
+        case ID_FILE_DISCOVER:
             discoveryThread_->StartDiscovery();
+            break;
+        case ID_HELP_ABOUT:
+            MessageBox(GetHWND(), L"HomeShare " HOMESHARE_VERSION_STRING, L"About HomeShare", MB_OK);
             break;
         }
         return 0;
