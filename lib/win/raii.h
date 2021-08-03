@@ -34,4 +34,6 @@ ScopeGuard<F> operator +(ScopeGuardDummy, F f) {
     return ScopeGuard<F>(std::forward<F>(f));
 }
 
-#define SCOPE_EXIT auto tmp_ ## LINE = ScopeGuardDummy() + [&]()
+#define CONCAT2(a, b) a ## b
+#define CONCAT(a, b) CONCAT2(a, b)
+#define SCOPE_EXIT auto CONCAT(tmp_, __LINE__) = ScopeGuardDummy() + [&]()

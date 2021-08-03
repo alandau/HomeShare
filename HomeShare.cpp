@@ -1,6 +1,7 @@
 #include "lib/win/window.h"
 #include "lib/win/raii.h"
 #include "lib/win/encoding.h"
+#include "lib/win/vista.h"
 #include "SocketThread.h"
 #include "DiskThread.h"
 #include "DiscoveryThread.h"
@@ -162,6 +163,7 @@ private:
     std::unique_ptr<DiscoveryThread> discoveryThread_;
 
     void SelectAndSendFile(const ContactData& contactData);
+    void SelectAndSendDirectory(const ContactData& contactData);
     bool TreeWalk(const std::wstring& root, const std::wstring& fileOrDir, std::vector<std::wstring>& files);
     void HandleDroppedFiles(HDROP hDrop);
     int GetContactIndex(const Contact& c);
@@ -458,10 +460,11 @@ LRESULT RootWindow::OnNotify(NMHDR *pnm) {
             AppendMenu(hMenu, MF_STRING | (conn ? MF_GRAYED : 0), 1, L"Connect");
             AppendMenu(hMenu, MF_STRING | (!conn ? MF_GRAYED : 0), 2, L"Disconnect");
             AppendMenu(hMenu, MF_STRING | (!conn ? MF_GRAYED : 0), 3, L"Send File(s)");
+            AppendMenu(hMenu, MF_STRING | (!conn ? MF_GRAYED : 0), 4, L"Send Folder");
             if (!data.stat.known) {
-                AppendMenu(hMenu, MF_STRING, 4, L"Add to contacts");
+                AppendMenu(hMenu, MF_STRING, 5, L"Add to contacts");
             } else {
-                AppendMenu(hMenu, MF_STRING, 5, L"Properties");
+                AppendMenu(hMenu, MF_STRING, 6, L"Properties");
             }
             POINT p;
             GetCursorPos(&p);
@@ -486,9 +489,12 @@ LRESULT RootWindow::OnNotify(NMHDR *pnm) {
                 SelectAndSendFile(data);
                 break;
             case 4:
-                AddToContacts(data);
+                SelectAndSendDirectory(data);
                 break;
             case 5:
+                AddToContacts(data);
+                break;
+            case 6:
                 struct Values {
                     std::wstring name;
                     std::string key;
@@ -762,6 +768,47 @@ void RootWindow::SelectAndSendFile(const ContactData& contactData)
             diskThread_->Enqueue(contactData.stat.c, filenames.get());
         }
     }
+}
+
+void RootWindow::SelectAndSendDirectory(const ContactData& contactData)
+{
+    std::wstring dir;
+    if (VistaSelectFolder(GetHWND(), dir)) {
+        // We're on Vista+ and new-style dialog is available
+        if (dir.empty()) {
+            // User cancelled
+            return;
+        }
+    } else {
+        BROWSEINFO bi = { 0 };
+        bi.hwndOwner = GetHWND();
+        bi.lpszTitle = L"Select a folder to send:";
+        bi.ulFlags = BIF_RETURNONLYFSDIRS | BIF_USENEWUI | BIF_NONEWFOLDERBUTTON;
+
+        ITEMIDLIST* idlist = SHBrowseForFolder(&bi);
+        if (idlist == NULL) {
+            return;
+        }
+        SCOPE_EXIT{
+            CoTaskMemFree(idlist);
+        };
+
+        wchar_t path[MAX_PATH];
+        if (!SHGetPathFromIDList(idlist, path)) {
+            logger_->w(L"Can't open the selected folder");
+            return;
+        }
+
+        dir = path;
+    }
+
+    std::vector<std::wstring> files;
+
+    if (!TreeWalk(dir, dir, files)) {
+        return;
+    }
+
+    diskThread_->Enqueue(contactData.stat.c, dir, files);
 }
 
 bool RootWindow::TreeWalk(const std::wstring& root, const std::wstring& filename, std::vector<std::wstring>& files) {

@@ -288,6 +288,9 @@
     <ClInclude Include="Database.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="lib\win\vista.h">
+      <Filter>lib\win</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="HomeShare.cpp">
@@ -313,6 +316,9 @@
     </ClCompile>
     <ClCompile Include="Database.cpp">
       <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="lib\win\vista.cpp">
+      <Filter>lib\win</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

@@ -69,7 +69,12 @@
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
-  <PropertyGroup />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <LinkIncremental>false</LinkIncremental>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <LinkIncremental>false</LinkIncremental>
+  </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
@@ -152,6 +157,7 @@
       <Optimization Condition="'$(Configuration)|$(Platform)'=='Release|x64'">MinSpace</Optimization>
     </ClCompile>
     <ClCompile Include="lib\win\MessageThread.cpp" />
+    <ClCompile Include="lib\win\vista.cpp" />
     <ClCompile Include="lib\win\window.cpp" />
     <ClCompile Include="SocketThread.cpp" />
   </ItemGroup>
@@ -234,6 +240,7 @@
     <ClInclude Include="lib\win\encoding.h" />
     <ClInclude Include="lib\win\MessageThread.h" />
     <ClInclude Include="lib\win\raii.h" />
+    <ClInclude Include="lib\win\vista.h" />
     <ClInclude Include="lib\win\window.h" />
     <ClInclude Include="Logger.h" />
     <ClInclude Include="proto\auth.h" />
